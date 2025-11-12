@@ -82,6 +82,8 @@ class ImageUploadManager:
                 # 检查响应
                 if response.status_code == 200:
                     result = response.json()
+                    # print the result
+                    print(result)
                     file_id = result.get("fileMetadataId", "")
                     file_uri = result.get("fileUri", "")
                     logger.debug(f"[Upload] 图片上传成功，文件ID: {file_id}")
@@ -91,7 +93,7 @@ class ImageUploadManager:
 
         except Exception as e:
             logger.warning(f"[Upload] 上传图片失败: {e}")
-            return ""
+            return "", ""
 
     @staticmethod
     def _is_url(image_input: str) -> bool:
