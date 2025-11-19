@@ -284,7 +284,18 @@ class GrokClient:
         except json.JSONDecodeError as e:
             logger.error(f"[Client] JSON parsing error: {e}")
             raise GrokApiException(f"JSON parsing error: {e}", "JSON_ERROR") from e
+        except GrokApiException:
+            raise
         except Exception as e:
+            # Handle potential class mismatch for GrokApiException
+            if type(e).__name__ == 'GrokApiException':
+                logger.warning(f"[Client] Caught GrokApiException via generic handler. Re-raising. Type: {type(e)}")
+                raise GrokApiException(
+                    message=getattr(e, 'message', str(e)),
+                    error_code=getattr(e, 'error_code', 'UNKNOWN'),
+                    details=getattr(e, 'details', {})
+                )
+            
             logger.error(f"[Client] Unknown request error: {type(e).__name__}: {e}")
             raise GrokApiException(f"Request processing error: {e}", "REQUEST_ERROR") from e
 
