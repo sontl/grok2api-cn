@@ -127,12 +127,15 @@ class GrokTokenManager:
             if '%' in sso_value:
                 try:
                     from urllib.parse import unquote
-                    sso_value = unquote(sso_value)
+                    decoded = unquote(sso_value)
+                    if decoded != sso_value:
+                        logger.debug(f"[Token] URL decoded sso value")
+                        sso_value = decoded
                 except Exception:
                     pass
             return sso_value
              
-        logger.warning("[Token] Unable to extract SSO value from authentication token")
+        logger.warning(f"[Token] Unable to extract SSO value. Auth token: {auth_token[:50]}...")
         return None
 
     def _find_token(self, sso_value: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
@@ -150,40 +153,32 @@ class GrokTokenManager:
             if key in self.token_data and sso_value in self.token_data[key]:
                 return key, self.token_data[key][sso_value]
         
-        # Debug logging for not found
-        logger.warning(f"[Token] Token not found: {sso_value[:20]}... (len: {len(sso_value)})")
+        # --- Debug logging for not found (User Requested) ---
+        logger.warning("="*50)
+        logger.warning(f"[Token] Token Lookup Failed!")
+        logger.warning(f"Searched Token (len={len(sso_value)}): {sso_value}")
         
-        # Deep comparison with the best candidate
-        best_candidate = None
-        best_key = None
-        
-        # Search in all checked keys
+        logger.warning("[Token] Dumping all available tokens in database:")
         for key in keys_to_check:
             if key in self.token_data:
-                for token in self.token_data[key]:
-                    # If lengths match, this is a strong candidate
-                    if len(token) == len(sso_value):
-                        best_candidate = token
-                        best_key = key
-                        break
-                if best_candidate:
-                    break
-        
-        if best_candidate:
-            logger.warning(f"[Token] Found candidate with same length in '{best_key}': {best_candidate[:20]}...")
-            if sso_value == best_candidate:
-                logger.error("[Token] WTF: Strings are equal but lookup failed!")
-            else:
-                for i, (c1, c2) in enumerate(zip(sso_value, best_candidate)):
-                    if c1 != c2:
-                        logger.warning(f"[Token] Mismatch at index {i}: '{c1}' (ord {ord(c1)}) vs '{c2}' (ord {ord(c2)})")
-                        break
-        else:
-            # Log available tokens if no candidate found
-            if TokenType.NORMAL.value in self.token_data:
-                keys = list(self.token_data[TokenType.NORMAL.value].keys())
-                if keys:
-                    logger.debug(f"[Token] Available normal tokens (first 3): {[k[:20] + '... (len: ' + str(len(k)) + ')' for k in keys[:3]]}")
+                for stored_token in self.token_data[key]:
+                    logger.warning(f"[{key}] (len={len(stored_token)}): {stored_token}")
+                    
+                    # Perform deep comparison if lengths match
+                    if len(stored_token) == len(sso_value):
+                        if stored_token == sso_value:
+                            logger.error(f"  >>> CRITICAL: Token matches string equality but lookup failed in dict! Key: {key}")
+                        else:
+                            logger.warning(f"  >>> Length match found. Comparing characters:")
+                            for i, (c1, c2) in enumerate(zip(sso_value, stored_token)):
+                                if c1 != c2:
+                                    logger.warning(f"      Mismatch at index {i}: '{c1}' (ord {ord(c1)}) vs '{c2}' (ord {ord(c2)})")
+                                    # Show context
+                                    start = max(0, i - 5)
+                                    end = min(len(sso_value), i + 5)
+                                    logger.warning(f"      Context: ...{sso_value[start:end]}... vs ...{stored_token[start:end]}...")
+                                    break
+        logger.warning("="*50)
         
         return None, None
 
