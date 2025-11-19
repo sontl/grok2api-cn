@@ -156,30 +156,8 @@ class GrokTokenManager:
         # --- Debug logging for not found (User Requested) ---
         logger.warning("="*50)
         logger.warning(f"[Token] Token Lookup Failed!")
-        logger.warning(f"Searched Token (len={len(sso_value)}): {sso_value}")
-        
+        logger.warning(f"Searched Token (len={len(sso_value)}): {sso_value[:250]}...")
         logger.warning("[Token] Dumping all available tokens in database:")
-        for key in keys_to_check:
-            if key in self.token_data:
-                for stored_token in self.token_data[key]:
-                    logger.warning(f"[{key}] (len={len(stored_token)}): {stored_token}")
-                    
-                    # Perform deep comparison if lengths match
-                    if len(stored_token) == len(sso_value):
-                        if stored_token == sso_value:
-                            logger.error(f"  >>> CRITICAL: Token matches string equality but lookup failed in dict! Key: {key}")
-                        else:
-                            logger.warning(f"  >>> Length match found. Comparing characters:")
-                            for i, (c1, c2) in enumerate(zip(sso_value, stored_token)):
-                                if c1 != c2:
-                                    logger.warning(f"      Mismatch at index {i}: '{c1}' (ord {ord(c1)}) vs '{c2}' (ord {ord(c2)})")
-                                    # Show context
-                                    start = max(0, i - 5)
-                                    end = min(len(sso_value), i + 5)
-                                    logger.warning(f"      Context: ...{sso_value[start:end]}... vs ...{stored_token[start:end]}...")
-                                    break
-        logger.warning("="*50)
-        
         return None, None
 
     async def add_token(self, tokens: list[str], token_type: TokenType) -> None:

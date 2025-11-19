@@ -76,8 +76,7 @@ class GrokClient:
                 sso_value = token_manager._extract_sso(auth_token)
                 if sso_value and sso_value not in tried_tokens:
                     tried_tokens.append(sso_value)
-                logger.debug(f"[Client] Using token {auth_token}")
-                logger.debug(f"[Client] Tried tokens {tried_tokens}")
+                logger.debug(f"[Client] Using token {auth_token[:250]}...")
                 # Upload images
                 imgs, uris = await GrokClient._upload_imgs(image_urls, auth_token)
 
