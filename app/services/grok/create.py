@@ -11,7 +11,7 @@ from app.core.logger import logger
 
 # Constant definitions
 CREATE_ENDPOINT = "https://grok.com/rest/media/post/create"
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 120
 IMPERSONATE_BROWSER = "chrome133a"
 
 

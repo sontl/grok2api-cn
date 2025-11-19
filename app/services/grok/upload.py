@@ -15,7 +15,7 @@ from app.core.logger import logger
 
 # Constant definitions
 UPLOAD_ENDPOINT = "https://grok.com/rest/app-chat/upload-file"
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 120
 IMPERSONATE_BROWSER = "chrome133a"
 DEFAULT_MIME_TYPE = "image/jpeg"
 DEFAULT_EXTENSION = "jpg"
