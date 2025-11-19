@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""MCP Tools - Grok AI 对话工具"""
+"""MCP Tools - Grok AI Conversation Tool"""
 
 import json
 from typing import Optional
@@ -14,42 +14,42 @@ async def ask_grok_impl(
     system_prompt: Optional[str] = None
 ) -> str:
     """
-    内部实现: 调用Grok API并收集完整响应
+    Internal implementation: Call Grok API and collect complete response
 
     Args:
-        query: 用户问题
-        model: 模型名称
-        system_prompt: 系统提示词
+        query: User question
+        model: Model name
+        system_prompt: System prompt
 
     Returns:
-        str: 完整的Grok响应内容
+        str: Complete Grok response content
     """
     try:
-        # 构建消息列表
+        # Build message list
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": query})
 
-        # 构建请求
+        # Build request
         request_data = {
             "model": model,
             "messages": messages,
             "stream": True
         }
 
-        logger.info(f"[MCP] ask_grok 调用, 模型: {model}")
+        logger.info(f"[MCP] ask_grok call, model: {model}")
 
-        # 调用Grok客户端(流式)
+        # Call Grok client (streaming)
         response_iterator = await GrokClient.openai_to_grok(request_data)
 
-        # 收集所有流式响应块
+        # Collect all streaming response chunks
         content_parts = []
         async for chunk in response_iterator:
             if isinstance(chunk, bytes):
                 chunk = chunk.decode('utf-8')
 
-            # 解析SSE格式
+            # Parse SSE format
             if chunk.startswith("data: "):
                 data_str = chunk[6:].strip()
                 if data_str == "[DONE]":
@@ -66,12 +66,12 @@ async def ask_grok_impl(
                     continue
 
         result = "".join(content_parts)
-        logger.info(f"[MCP] ask_grok 完成, 响应长度: {len(result)}")
+        logger.info(f"[MCP] ask_grok completed, response length: {len(result)}")
         return result
 
     except GrokApiException as e:
-        logger.error(f"[MCP] Grok API错误: {str(e)}")
-        raise Exception(f"Grok API调用失败: {str(e)}")
+        logger.error(f"[MCP] Grok API error: {str(e)}")
+        raise Exception(f"Grok API call failed: {str(e)}")
     except Exception as e:
-        logger.error(f"[MCP] ask_grok异常: {str(e)}", exc_info=True)
-        raise Exception(f"处理请求时出错: {str(e)}")
+        logger.error(f"[MCP] ask_grok exception: {str(e)}", exc_info=True)
+        raise Exception(f"Error processing request: {str(e)}")

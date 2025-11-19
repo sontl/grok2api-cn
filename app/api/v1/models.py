@@ -1,7 +1,7 @@
 """
-模型接口模块
+Model API module
 
-提供 OpenAI 兼容的 /v1/models 端点，返回系统支持的所有模型列表。
+Provides an OpenAI-compatible /v1/models endpoint, returning the list of all models supported by the system.
 """
 
 import time
@@ -12,39 +12,39 @@ from app.models.grok_models import Models
 from app.core.auth import auth_manager
 from app.core.logger import logger
 
-# 配置日志
+# Configure logging
 
-# 创建路由器
-router = APIRouter(tags=["模型"])
+# Create router
+router = APIRouter(tags=["models"])
 
 
 @router.get("/models")
 async def list_models(_: Optional[str] = Depends(auth_manager.verify)) -> Dict[str, Any]:
     """
-    获取可用模型列表
+Retrieve available model list
 
-    返回 OpenAI 兼容的模型列表格式，包含系统支持的所有 Grok 模型的详细信息。
+Returns an OpenAI-compatible list of models, including detailed information for all Grok models supported by the system.
 
-    Args:
-        _: 认证依赖（自动验证）
+Args:
+    _: Authentication dependency (auto-validated)
 
-    Returns:
-        Dict[str, Any]: 包含模型列表的响应数据
-    """
+Returns:
+    Dict[str, Any]: Response data containing the model list
+"""
     try:
-        logger.debug("[Models] 请求获取模型列表")
+        logger.debug("[Models] Requesting model list")
 
-        # 获取当前时间戳
+        # Get current timestamp
         current_timestamp = int(time.time())
         
-        # 构建模型数据列表
+        # Build model data list
         model_data: List[Dict[str, Any]] = []
         
         for model in Models:
             model_id = model.value
             config = Models.get_model_info(model_id)
             
-            # 基础信息
+            # Base information
             model_info = {
                 "id": model_id,
                 "object": "model", 
@@ -61,17 +61,17 @@ async def list_models(_: Optional[str] = Depends(auth_manager.verify)) -> Dict[s
             
             model_data.append(model_info)
         
-        # 构建响应
+        # Build response
         response = {
             "object": "list",
             "data": model_data
         }
 
-        logger.debug(f"[Models] 成功返回 {len(model_data)} 个模型")
+        logger.debug(f"[Models] Successfully returned {len(model_data)} models")
         return response
         
     except Exception as e:
-        logger.error(f"[Models] 获取模型列表时发生错误: {str(e)}")
+        logger.error(f"[Models] Error retrieving model list: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail={
@@ -87,21 +87,21 @@ async def list_models(_: Optional[str] = Depends(auth_manager.verify)) -> Dict[s
 @router.get("/models/{model_id}")
 async def get_model(model_id: str, _: Optional[str] = Depends(auth_manager.verify)) -> Dict[str, Any]:
     """
-    获取特定模型信息
+Retrieve specific model information
 
-    Args:
-        model_id (str): 模型ID
-        _: 认证依赖（自动验证）
+Args:
+    model_id (str): Model ID
+    _: Authentication dependency (auto-validated)
 
-    Returns:
-        Dict[str, Any]: 模型详细信息
-    """
+Returns:
+    Dict[str, Any]: Detailed model information
+"""
     try:
-        logger.debug(f"[Models] 请求获取模型信息: {model_id}")
+        logger.debug(f"[Models] Requesting model info: {model_id}")
 
-        # 验证模型是否存在
+        # Validate model existence
         if not Models.is_valid_model(model_id):
-            logger.warning(f"[Models] 请求的模型不存在: {model_id}")
+            logger.warning(f"[Models] Requested model does not exist: {model_id}")
             raise HTTPException(
                 status_code=404,
                 detail={
@@ -113,13 +113,13 @@ async def get_model(model_id: str, _: Optional[str] = Depends(auth_manager.verif
                 }
             )
         
-        # 获取当前时间戳
+        # Get current timestamp
         current_timestamp = int(time.time())
         
-        # 获取模型配置
+        # Get model configuration
         config = Models.get_model_info(model_id)
         
-        # 构建模型信息
+        # Build model information
         model_info = {
             "id": model_id,
             "object": "model",
@@ -134,13 +134,13 @@ async def get_model(model_id: str, _: Optional[str] = Depends(auth_manager.verif
             "default_top_p": config.get("default_top_p", 0.95)
         }
 
-        logger.debug(f"[Models] 成功返回模型信息: {model_id}")
+        logger.debug(f"[Models] Successfully returned model info: {model_id}")
         return model_info
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Models] 获取模型信息时发生错误: {str(e)}")
+        logger.error(f"[Models] Error retrieving model info: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail={

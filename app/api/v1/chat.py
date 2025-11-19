@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-聊天API路由模块
+Chat API routing module
 
-提供OpenAI兼容的聊天API接口，支持与Grok模型的交互。
+Provides an OpenAI-compatible chat API endpoint, supporting interaction with Grok models.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,8 +15,8 @@ from app.core.logger import logger
 from app.services.grok.client import GrokClient
 from app.models.openai_schema import OpenAIChatRequest
 
-# 聊天路由
-router = APIRouter(prefix="/chat", tags=["聊天"])
+# Chat router
+router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 @router.post("/completions", response_model=None)
@@ -25,28 +25,28 @@ async def chat_completions(
     _: Optional[str] = Depends(auth_manager.verify)
 ):
     """
-    创建聊天补全
+    Create chat completion.
 
-    兼容OpenAI聊天API的端点，支持流式和非流式响应。
+    Provides an OpenAI-compatible chat endpoint supporting both streaming and non‑streaming responses.
 
     Args:
-        request: OpenAI格式的聊天请求
-        _: 认证依赖（自动验证）
+        request: OpenAI‑format chat request.
+        _: Authentication dependency (auto‑validated).
 
     Returns:
-        OpenAIChatCompletionResponse: 非流式响应
-        StreamingResponse: 流式响应
+        OpenAIChatCompletionResponse: Non‑streaming response.
+        StreamingResponse: Streaming response.
 
     Raises:
-        HTTPException: 当请求处理失败时
+        HTTPException: When request processing fails.
     """
     try:
-        logger.info(f"[Chat] 收到聊天请求")
+        logger.info(f"[Chat] Received chat request")
 
-        # 调用Grok客户端处理请求
+        # Call Grok client to process request
         result = await GrokClient.openai_to_grok(request.model_dump())
         
-        # 如果是流式响应，GrokClient已经返回了Iterator，直接包装为StreamingResponse
+        # If streaming response, GrokClient already returns an iterator; wrap it in StreamingResponse
         if request.stream:
             return StreamingResponse(
                 content=result,
@@ -58,11 +58,11 @@ async def chat_completions(
                 }
             )
         
-        # 非流式响应直接返回
+        # Non‑streaming response: return directly
         return result
         
     except GrokApiException as e:
-        logger.error(f"[Chat] Grok API错误: {str(e)} - 详情: {e.details}")
+        logger.error(f"[Chat] Grok API error: {str(e)} - details: {e.details}")
         raise HTTPException(
             status_code=500,
             detail={
@@ -74,12 +74,12 @@ async def chat_completions(
             }
         )
     except Exception as e:
-        logger.error(f"[Chat] 聊天请求处理失败: {str(e)}")
+        logger.error(f"[Chat] Chat request processing failed: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail={
                 "error": {
-                    "message": "服务器内部错误",
+                    "message": "Internal server error",
                     "type": "internal_error",
                     "code": "internal_server_error"
                 }

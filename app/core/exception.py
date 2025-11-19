@@ -17,7 +17,7 @@ class GrokApiException(Exception):
 
 
 def build_error_response(message: str, error_type: str, code: str = None, param: str = None) -> dict:
-    """构建OpenAI兼容的错误响应"""
+    """Build OpenAI-compatible error response"""
     error = {
         "message": message,
         "type": error_type,
@@ -31,15 +31,15 @@ def build_error_response(message: str, error_type: str, code: str = None, param:
 
 
 async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
-    """处理HTTP异常"""
+    """Handle HTTP exceptions"""
     error_map = {
-        400: ("invalid_request_error", "请求格式错误或缺少必填参数。"),
-        401: ("invalid_request_error", "令牌认证失败。"),
-        403: ("permission_error", "没有权限访问此资源。"),
-        404: ("invalid_request_error", "请求的资源不存在。"),
-        429: ("rate_limit_error", "请求频率超出限制，请稍后再试。"),
-        500: ("api_error", "内部服务器错误。"),
-        503: ("api_error", "服务暂时不可用。"),
+        400: ("invalid_request_error", "Request format error or missing required parameters."),
+        401: ("invalid_request_error", "Token authentication failed."),
+        403: ("permission_error", "No permission to access this resource."),
+        404: ("invalid_request_error", "Requested resource does not exist."),
+        429: ("rate_limit_error", "Request frequency exceeds limit, please try again later."),
+        500: ("api_error", "Internal server error."),
+        503: ("api_error", "Service temporarily unavailable."),
     }
 
     error_type, default_message = error_map.get(exc.status_code, ("api_error", str(exc.detail)))
@@ -52,10 +52,10 @@ async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSO
 
 
 async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
-    """处理验证错误"""
+    """Handle validation errors"""
     errors = exc.errors()
     param = errors[0]["loc"][-1] if errors and errors[0].get("loc") else None
-    message = errors[0]["msg"] if errors and errors[0].get("msg") else "请求参数错误。"
+    message = errors[0]["msg"] if errors and errors[0].get("msg") else "Request parameter error."
 
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -102,11 +102,11 @@ async def grok_api_exception_handler(_: Request, exc: GrokApiException) -> JSONR
 
 
 async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
-    """处理未捕获异常"""
+    """Handle uncaught exceptions"""
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=build_error_response(
-            "服务器遇到意外错误，请重试。",
+            "Server encountered an unexpected error, please try again.",
             "api_error"
         )
     )

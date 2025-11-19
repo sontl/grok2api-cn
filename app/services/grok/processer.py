@@ -1,4 +1,4 @@
-"""Grok API 响应处理器模块"""
+"""Grok API Response Processor Module"""
 
 import json
 import uuid
@@ -21,65 +21,65 @@ from app.services.grok.cache import image_cache_service, video_cache_service
 
 
 class StreamTimeoutManager:
-    """流式响应超时管理器"""
-    
+    """Streaming response timeout manager"""
+
     def __init__(self, chunk_timeout: int = 120, first_response_timeout: int = 30, total_timeout: int = 600):
-        """初始化超时管理器
-        
+        """Initialize timeout manager
+
         Args:
-            chunk_timeout: 数据块间隔超时（秒）
-            first_response_timeout: 首次响应超时（秒）
-            total_timeout: 总超时限制（秒，0表示不限制）
+            chunk_timeout: Chunk interval timeout (seconds)
+            first_response_timeout: First response timeout (seconds)
+            total_timeout: Total timeout limit (seconds, 0 means no limit)
         """
         self.chunk_timeout = chunk_timeout
         self.first_response_timeout = first_response_timeout
         self.total_timeout = total_timeout
-        
+
         self.start_time = asyncio.get_event_loop().time()
         self.last_chunk_time = self.start_time
         self.first_chunk_received = False
-    
+
     def check_timeout(self) -> tuple[bool, str]:
-        """检查是否超时
-        
+        """Check if timeout has occurred
+
         Returns:
-            (is_timeout, timeout_message): 是否超时及超时信息
+            (is_timeout, timeout_message): Whether timeout occurred and timeout message
         """
         current_time = asyncio.get_event_loop().time()
-        
-        # 检查首次响应超时
+
+        # Check first response timeout
         if not self.first_chunk_received:
             if current_time - self.start_time > self.first_response_timeout:
-                return True, f"首次响应超时 ({self.first_response_timeout}秒未收到首个数据块)"
-        
-        # 检查总超时
+                return True, f"First response timeout ({self.first_response_timeout}s without receiving first chunk)"
+
+        # Check total timeout
         if self.total_timeout > 0:
             if current_time - self.start_time > self.total_timeout:
-                return True, f"流式响应总超时 ({self.total_timeout}秒)"
-        
-        # 检查数据块间隔超时
+                return True, f"Stream response total timeout ({self.total_timeout}s)"
+
+        # Check chunk interval timeout
         if self.first_chunk_received:
             if current_time - self.last_chunk_time > self.chunk_timeout:
-                return True, f"数据块间隔超时 ({self.chunk_timeout}秒无新数据)"
-        
+                return True, f"Chunk interval timeout ({self.chunk_timeout}s without new data)"
+
         return False, ""
-    
+
     def mark_chunk_received(self):
-        """标记收到数据块"""
+        """Mark chunk received"""
         self.last_chunk_time = asyncio.get_event_loop().time()
         self.first_chunk_received = True
-    
+
     def get_total_duration(self) -> float:
-        """获取总耗时（秒）"""
+        """Get total duration (seconds)"""
         return asyncio.get_event_loop().time() - self.start_time
 
 
 class GrokResponseProcessor:
-    """Grok API 响应处理器"""
+    """Grok API Response Processor"""
 
     @staticmethod
     async def process_normal(response, auth_token: str, model: str = None) -> OpenAIChatCompletionResponse:
-        """处理非流式响应"""
+        """Process non-streaming response"""
         response_closed = False
         try:
             for chunk in response.iter_lines():
@@ -88,24 +88,24 @@ class GrokResponseProcessor:
 
                 data = json.loads(chunk.decode("utf-8"))
 
-                # 错误检查
+                # Error check
                 if error := data.get("error"):
                     raise GrokApiException(
-                        f"API错误: {error.get('message', '未知错误')}",
+                        f"API error: {error.get('message', 'Unknown error')}",
                         "API_ERROR",
                         {"code": error.get("code")}
                     )
 
-                # 提取响应数据
+                # Extract response data
                 grok_resp = data.get("result", {}).get("response", {})
-                
-                # 提取视频数据
+
+                # Extract video data
                 if video_resp := grok_resp.get("streamingVideoGenerationResponse"):
                     if video_url := video_resp.get("videoUrl"):
-                        logger.debug(f"[Processor] 检测到视频生成: {video_url}")
+                        logger.debug(f"[Processor] Detected video generation: {video_url}")
                         full_video_url = f"https://assets.grok.com/{video_url}"
-                        
-                        # 下载并缓存视频
+
+                        # Download and cache video
                         try:
                             cache_path = await video_cache_service.download_video(f"/{video_url}", auth_token)
                             if cache_path:
@@ -116,10 +116,10 @@ class GrokResponseProcessor:
                             else:
                                 content = f'<video src="{full_video_url}" controls="controls" width="500" height="300"></video>\n'
                         except Exception as e:
-                            logger.warning(f"[Processor] 缓存视频失败: {e}")
+                            logger.warning(f"[Processor] Failed to cache video: {e}")
                             content = f'<video src="{full_video_url}" controls="controls" width="500" height="300"></video>\n'
-                        
-                        # 返回视频响应
+
+                        # Return video response
                         result = OpenAIChatCompletionResponse(
                             id=f"chatcmpl-{uuid.uuid4()}",
                             object="chat.completion",
@@ -139,38 +139,38 @@ class GrokResponseProcessor:
                         response.close()
                         return result
 
-                # 提取模型响应
+                # Extract model response
                 model_response = grok_resp.get("modelResponse")
                 if not model_response:
                     continue
 
-                # 检查 modelResponse 中的错误
+                # Check error in modelResponse
                 if error_msg := model_response.get("error"):
                     raise GrokApiException(
-                        f"模型响应错误: {error_msg}",
+                        f"Model response error: {error_msg}",
                         "MODEL_ERROR"
                     )
 
-                # 构建响应内容
+                # Build response content
                 model_name = model_response.get("model")
                 content = model_response.get("message", "")
 
-                # 提取图片数据
+                # Extract image data
                 if images := model_response.get("generatedImageUrls"):
-                    # 获取图片返回模式
+                    # Get image return mode
                     image_mode = setting.global_config.get("image_mode", "url")
 
                     for img in images:
                         try:
                             if image_mode == "base64":
-                                # base64 模式：下载并转换为 base64
+                                # base64 mode: download and convert to base64
                                 base64_str = await image_cache_service.download_base64(f"/{img}", auth_token)
                                 if base64_str:
                                     content += f"\n![Generated Image]({base64_str})"
                                 else:
                                     content += f"\n![Generated Image](https://assets.grok.com/{img})"
                             else:
-                                # url 模式：缓存并返回链接
+                                # url mode: cache and return link
                                 cache_path = await image_cache_service.download_image(f"/{img}", auth_token)
                                 if cache_path:
                                     img_path = img.replace('/', '-')
@@ -180,10 +180,10 @@ class GrokResponseProcessor:
                                 else:
                                     content += f"\n![Generated Image](https://assets.grok.com/{img})"
                         except Exception as e:
-                            logger.warning(f"[Processor] 处理图片失败: {e}")
+                            logger.warning(f"[Processor] Failed to process image: {e}")
                             content += f"\n![Generated Image](https://assets.grok.com/{img})"
 
-                # 返回 OpenAI 响应格式
+                # Return OpenAI response format
                 result = OpenAIChatCompletionResponse(
                     id=f"chatcmpl-{uuid.uuid4()}",
                     object="chat.completion",
@@ -203,25 +203,25 @@ class GrokResponseProcessor:
                 response.close()
                 return result
 
-            raise GrokApiException("无响应数据", "NO_RESPONSE")
+            raise GrokApiException("No response data", "NO_RESPONSE")
 
         except json.JSONDecodeError as e:
-            logger.error(f"[Processor] JSON解析失败: {e}")
-            raise GrokApiException(f"JSON解析失败: {e}", "JSON_ERROR") from e
+            logger.error(f"[Processor] JSON parsing failed: {e}")
+            raise GrokApiException(f"JSON parsing failed: {e}", "JSON_ERROR") from e
         except Exception as e:
-            logger.error(f"[Processor] 处理响应时发生未知错误: {type(e).__name__}: {e}")
-            raise GrokApiException(f"响应处理错误: {e}", "PROCESS_ERROR") from e
+            logger.error(f"[Processor] Unknown error occurred while processing response: {type(e).__name__}: {e}")
+            raise GrokApiException(f"Response processing error: {e}", "PROCESS_ERROR") from e
         finally:
-            # 确保响应对象被关闭，避免双重释放
+            # Ensure response object is closed to prevent double release
             if not response_closed and hasattr(response, 'close'):
                 try:
                     response.close()
                 except Exception as e:
-                    logger.warning(f"[Processor] 关闭响应对象时出错: {e}")
+                    logger.warning(f"[Processor] Error closing response object: {e}")
 
     @staticmethod
     async def process_stream(response, auth_token: str) -> AsyncGenerator[str, None]:
-        """处理流式响应"""
+        """Process streaming response"""
         # 流式生成状态
         is_image = False
         is_thinking = False

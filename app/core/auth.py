@@ -1,4 +1,4 @@
-"""认证模块"""
+"""Authentication module"""
 
 from typing import Optional
 from fastapi import Depends, HTTPException
@@ -11,15 +11,15 @@ security = HTTPBearer(auto_error=False)
 
 
 class AuthManager:
-    """认证管理器"""
+    """Authentication manager"""
 
     @staticmethod
     def verify(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Optional[str]:
-        """验证认证令牌"""
+        """Verify authentication token"""
         api_key = setting.grok_config.get("api_key")
 
         if not api_key:
-            logger.debug("[Auth] 未设置API_KEY，跳过验证。")
+            logger.debug("[Auth] API_KEY not set, skipping verification.")
             return credentials.credentials if credentials else None
 
         if not credentials:
@@ -27,7 +27,7 @@ class AuthManager:
                 status_code=401,
                 detail={
                     "error": {
-                        "message": "缺少认证令牌",
+                        "message": "Missing authentication token",
                         "type": "authentication_error",
                         "code": "missing_token"
                     }
@@ -39,14 +39,14 @@ class AuthManager:
                 status_code=401,
                 detail={
                     "error": {
-                        "message": f"令牌无效，长度: {len(credentials.credentials)}",
+                        "message": f"Invalid token, length: {len(credentials.credentials)}",
                         "type": "authentication_error",
                         "code": "invalid_token"
                     }
                 }
             )
 
-        logger.debug("[Auth] 令牌认证成功")
+        logger.debug("[Auth] Token authentication successful")
         return credentials.credentials
 
 

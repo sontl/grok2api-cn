@@ -1,4 +1,4 @@
-"""FastAPI应用主入口"""
+"""FastAPI Application Main Entry Point"""
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -13,99 +13,99 @@ from app.api.v1.models import router as models_router
 from app.api.v1.images import router as images_router
 from app.api.admin.manage import router as admin_router
 
-# 导入MCP服务器（认证配置在server.py中完成）
+# Import MCP server (authentication configuration is completed in server.py)
 from app.services.mcp import mcp
 
-# 创建MCP的FastAPI应用实例
-# 使用流式HTTP传输，支持高效的双向流式通信
+# Create MCP's FastAPI application instance
+# Using streaming HTTP transport, supporting efficient bidirectional streaming communication
 mcp_app = mcp.http_app(stateless_http=True, transport="streamable-http")
 
-# 2. 定义应用生命周期
+# 2. Define application lifecycle
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    启动顺序:
-    1. 初始化核心服务 (storage, settings, token_manager)
-    2. 启动MCP服务生命周期
-    
-    关闭顺序 (LIFO):
-    1. 关闭MCP服务生命周期
-    2. 关闭核心服务
+    Startup sequence:
+    1. Initialize core services (storage, settings, token_manager)
+    2. Start MCP service lifecycle
+
+    Shutdown sequence (LIFO):
+    1. Close MCP service lifecycle
+    2. Close core services
     """
-    # --- 启动过程 ---
-    # 1. 初始化核心服务
+    # --- Startup process ---
+    # 1. Initialize core services
     await storage_manager.init()
 
-    # 设置存储到配置和token管理器
+    # Set storage to config and token manager
     storage = storage_manager.get_storage()
     setting.set_storage(storage)
     token_manager.set_storage(storage)
-    
-    # 重新加载配置和token数据
+
+    # Reload config and token data
     await setting.reload()
     token_manager._load_data()
-    logger.info("[Grok2API] 核心服务初始化完成")
+    logger.info("[Grok2API] Core services initialization completed")
 
-    # 2. 管理MCP服务的生命周期
+    # 2. Manage MCP service lifecycle
     mcp_lifespan_context = mcp_app.lifespan(app)
     await mcp_lifespan_context.__aenter__()
-    logger.info("[MCP] MCP服务初始化完成")
+    logger.info("[MCP] MCP services initialization completed")
 
-    logger.info("[Grok2API] 应用启动成功")
-    
+    logger.info("[Grok2API] Application startup successful")
+
     try:
         yield
     finally:
-        # --- 关闭过程 ---
-        # 1. 退出MCP服务的生命周期
+        # --- Shutdown process ---
+        # 1. Exit MCP service lifecycle
         await mcp_lifespan_context.__aexit__(None, None, None)
-        logger.info("[MCP] MCP服务已关闭")
-        
-        # 2. 关闭核心服务
+        logger.info("[MCP] MCP service closed")
+
+        # 2. Close core services
         await storage_manager.close()
-        logger.info("[Grok2API] 应用关闭成功")
+        logger.info("[Grok2API] Application shutdown successful")
 
 
-# 初始化日志
-logger.info("[Grok2API] 应用正在启动...")
+# Initialize logger
+logger.info("[Grok2API] Application is starting...")
 
-# 创建FastAPI应用
+# Create FastAPI application
 app = FastAPI(
     title="Grok2API",
-    description="Grok API 转换服务",
+    description="Grok API Translation Service",
     version="1.3.1",
     lifespan=lifespan
 )
 
-# 注册全局异常处理器
+# Register global exception handlers
 register_exception_handlers(app)
 
-# 注册路由
+# Register routers
 app.include_router(chat_router, prefix="/v1")
 app.include_router(models_router, prefix="/v1")
 app.include_router(images_router)
 app.include_router(admin_router)
 
-# 挂载静态文件
+# Mount static files
 app.mount("/static", StaticFiles(directory="app/template"), name="template")
 
 @app.get("/")
 async def root():
-    """根路径"""
+    """Root path"""
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/login")
 
 
 @app.get("/health")
 async def health_check():
-    """健康检查接口"""
+    """Health check interface"""
     return {
         "status": "healthy",
         "service": "Grok2API",
         "version": "1.0.3"
     }
 
-# 挂载MCP服务器 
+# Mount MCP server
 app.mount("", mcp_app)
 
 

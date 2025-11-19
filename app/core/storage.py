@@ -1,4 +1,4 @@
-"""存储抽象层 - 支持文件、MySQL和Redis存储"""
+"""Storage abstraction layer - supports file, MySQL and Redis storage"""
 
 import os
 import json
@@ -18,36 +18,36 @@ StorageMode = Literal["file", "mysql", "redis"]
 
 
 class BaseStorage(ABC):
-    """存储基类"""
+    """Storage base class"""
 
     @abstractmethod
     async def init_db(self) -> None:
-        """初始化数据库"""
+        """Initialize database"""
         pass
 
     @abstractmethod
     async def load_tokens(self) -> Dict[str, Any]:
-        """加载token数据"""
+        """Load token data"""
         pass
 
     @abstractmethod
     async def save_tokens(self, data: Dict[str, Any]) -> None:
-        """保存token数据"""
+        """Save token data"""
         pass
 
     @abstractmethod
     async def load_config(self) -> Dict[str, Any]:
-        """加载配置数据"""
+        """Load configuration data"""
         pass
 
     @abstractmethod
     async def save_config(self, data: Dict[str, Any]) -> None:
-        """保存配置数据"""
+        """Save configuration data"""
         pass
 
 
 class FileStorage(BaseStorage):
-    """文件存储实现"""
+    """File storage implementation"""
 
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
@@ -57,92 +57,92 @@ class FileStorage(BaseStorage):
         self._config_lock = asyncio.Lock()
 
     async def init_db(self) -> None:
-        """初始化文件存储"""
+        """Initialize file storage"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        # 初始化token文件
+        # Initialize token file
         if not self.token_file.exists():
             await self._write_file(self.token_file, json.dumps({"sso": {}, "ssoSuper": {}}, indent=2, ensure_ascii=False))
-            logger.info("[Storage] 创建新的token文件")
+            logger.info("[Storage] Creating new token file")
 
-        # 初始化配置文件
+        # Initialize configuration file
         if not self.config_file.exists():
             default_config = {
                 "global": {"api_keys": [], "admin_username": "admin", "admin_password": "admin"},
                 "grok": {"proxy_url": "", "cf_clearance": "", "x_statsig_id": ""}
             }
             await self._write_file(self.config_file, toml.dumps(default_config))
-            logger.info("[Storage] 创建新的配置文件")
+            logger.info("[Storage] Creating new configuration file")
 
     async def _read_file(self, file_path: Path) -> str:
-        """读取文件内容"""
+        """Read file content"""
         async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
             return await f.read()
 
     async def _write_file(self, file_path: Path, content: str) -> None:
-        """写入文件内容"""
+        """Write file content"""
         async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
             await f.write(content)
 
     async def _load_json(self, file_path: Path, default: Dict[str, Any], lock: asyncio.Lock) -> Dict[str, Any]:
-        """加载JSON文件"""
+        """Load JSON file"""
         try:
             async with lock:
                 if not file_path.exists():
                     return default
                 return json.loads(await self._read_file(file_path))
         except Exception as e:
-            logger.error(f"[Storage] 加载{file_path.name}失败: {e}")
+            logger.error(f"[Storage] Failed to load {file_path.name}: {e}")
             return default
 
     async def _save_json(self, file_path: Path, data: Dict[str, Any], lock: asyncio.Lock) -> None:
-        """保存JSON文件"""
+        """Save JSON file"""
         try:
             async with lock:
                 await self._write_file(file_path, json.dumps(data, indent=2, ensure_ascii=False))
         except Exception as e:
-            logger.error(f"[Storage] 保存{file_path.name}失败: {e}")
+            logger.error(f"[Storage] Failed to save {file_path.name}: {e}")
             raise
 
     async def _load_toml(self, file_path: Path, default: Dict[str, Any], lock: asyncio.Lock) -> Dict[str, Any]:
-        """加载TOML文件"""
+        """Load TOML file"""
         try:
             async with lock:
                 if not file_path.exists():
                     return default
                 return toml.loads(await self._read_file(file_path))
         except Exception as e:
-            logger.error(f"[Storage] 加载{file_path.name}失败: {e}")
+            logger.error(f"[Storage] Failed to load {file_path.name}: {e}")
             return default
 
     async def _save_toml(self, file_path: Path, data: Dict[str, Any], lock: asyncio.Lock) -> None:
-        """保存TOML文件"""
+        """Save TOML file"""
         try:
             async with lock:
                 await self._write_file(file_path, toml.dumps(data))
         except Exception as e:
-            logger.error(f"[Storage] 保存{file_path.name}失败: {e}")
+            logger.error(f"[Storage] Failed to save {file_path.name}: {e}")
             raise
 
     async def load_tokens(self) -> Dict[str, Any]:
-        """加载token数据"""
+        """Load token data"""
         return await self._load_json(self.token_file, {"sso": {}, "ssoSuper": {}}, self._token_lock)
 
     async def save_tokens(self, data: Dict[str, Any]) -> None:
-        """保存token数据"""
+        """Save token data"""
         await self._save_json(self.token_file, data, self._token_lock)
 
     async def load_config(self) -> Dict[str, Any]:
-        """加载配置数据"""
+        """Load configuration data"""
         return await self._load_toml(self.config_file, {"global": {}, "grok": {}}, self._config_lock)
 
     async def save_config(self, data: Dict[str, Any]) -> None:
-        """保存配置数据"""
+        """Save configuration data"""
         await self._save_toml(self.config_file, data, self._config_lock)
 
 
 class MysqlStorage(BaseStorage):
-    """MySQL存储实现"""
+    """MySQL storage implementation"""
 
     def __init__(self, database_url: str, data_dir: Path):
         self.database_url = database_url
@@ -151,37 +151,37 @@ class MysqlStorage(BaseStorage):
         self._file = FileStorage(data_dir)
 
     async def init_db(self) -> None:
-        """初始化MySQL"""
+        """Initialize MySQL"""
         try:
             import aiomysql
             parsed = self._parse_url(self.database_url)
-            logger.info(f"[Storage] 解析数据库连接: {parsed['user']}@{parsed['host']}:{parsed['port']}/{parsed['db']}")
+            logger.info(f"[Storage] Parsing database connection: {parsed['user']}@{parsed['host']}:{parsed['port']}/{parsed['db']}")
 
-            # 创建数据库
+            # Create database
             await self._create_db(parsed)
 
-            # 创建连接池
+            # Create connection pool
             self._pool = await aiomysql.create_pool(
                 host=parsed['host'], port=parsed['port'], user=parsed['user'],
                 password=parsed['password'], db=parsed['db'], charset="utf8mb4",
                 autocommit=True, maxsize=10
             )
 
-            # 创建表
+            # Create tables
             await self._create_tables()
 
-            # 初始化文件存储和同步数据
+            # Initialize file storage and synchronize data
             await self._file.init_db()
             await self._sync_data()
 
         except ImportError:
-            raise Exception("aiomysql未安装")
+            raise Exception("aiomysql not installed")
         except Exception as e:
-            logger.error(f"[Storage] MySQL初始化失败: {e}")
+            logger.error(f"[Storage] MySQL initialization failed: {e}")
             raise
 
     def _parse_url(self, url: str) -> Dict[str, Any]:
-        """解析数据库URL"""
+        """Parse database URL"""
         parsed = urlparse(url)
         return {
             'user': unquote(parsed.username) if parsed.username else "",
@@ -192,7 +192,7 @@ class MysqlStorage(BaseStorage):
         }
 
     async def _create_db(self, parsed: Dict[str, Any]) -> None:
-        """创建数据库"""
+        """Create database"""
         import aiomysql
         temp_pool = await aiomysql.create_pool(
             host=parsed['host'], port=parsed['port'], user=parsed['user'],
@@ -208,13 +208,13 @@ class MysqlStorage(BaseStorage):
                             f"CREATE DATABASE IF NOT EXISTS `{parsed['db']}` "
                             f"CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
                         )
-                    logger.info(f"[Storage] MySQL数据库 '{parsed['db']}' 已就绪")
+                    logger.info(f"[Storage] MySQL database '{parsed['db']}' is ready")
         finally:
             temp_pool.close()
             await temp_pool.wait_closed()
 
     async def _create_tables(self) -> None:
-        """创建表"""
+        """Create tables"""
         tables = {
             "grok_tokens": """
                 CREATE TABLE IF NOT EXISTS grok_tokens (
@@ -240,10 +240,10 @@ class MysqlStorage(BaseStorage):
                     warnings.filterwarnings('ignore', message='.*already exists')
                     for sql in tables.values():
                         await cursor.execute(sql)
-                logger.info("[Storage] MySQL表创建/验证成功")
+                logger.info("[Storage] MySQL tables created/verified successfully")
 
     async def _sync_data(self) -> None:
-        """同步数据"""
+        """Synchronize data"""
         try:
             for table, key in [("grok_tokens", "sso"), ("grok_settings", "global")]:
                 data = await self._load_db(table)
@@ -252,23 +252,23 @@ class MysqlStorage(BaseStorage):
                         await self._file.save_tokens(data)
                     else:
                         await self._file.save_config(data)
-                    logger.info(f"[Storage] {table.split('_')[1]}数据已从数据库同步到文件")
+                    logger.info(f"[Storage] {table.split('_')[1]} data synchronized from database to file")
                 else:
                     if table == "grok_tokens":
                         file_data = await self._file.load_tokens()
                         if file_data.get(key) or file_data.get("ssoSuper"):
                             await self._save_db(table, file_data)
-                            logger.info("[Storage] Token数据已从文件初始化到数据库")
+                            logger.info("[Storage] Token data initialized from file to database")
                     else:
                         file_data = await self._file.load_config()
                         if file_data.get(key) or file_data.get("grok"):
                             await self._save_db(table, file_data)
-                            logger.info("[Storage] 配置数据已从文件初始化到数据库")
+                            logger.info("[Storage] Configuration data initialized from file to database")
         except Exception as e:
-            logger.warning(f"[Storage] 数据同步失败: {e}")
+            logger.warning(f"[Storage] Data synchronization failed: {e}")
 
     async def _load_db(self, table: str) -> Optional[Dict[str, Any]]:
-        """从数据库加载数据"""
+        """Load data from database"""
         try:
             async with self._pool.acquire() as conn:
                 async with conn.cursor() as cursor:
@@ -276,11 +276,11 @@ class MysqlStorage(BaseStorage):
                     result = await cursor.fetchone()
                     return json.loads(result[0]) if result else None
         except Exception as e:
-            logger.error(f"[Storage] 从数据库加载{table}失败: {e}")
+            logger.error(f"[Storage] Failed to load {table} from database: {e}")
             return None
 
     async def _save_db(self, table: str, data: Dict[str, Any]) -> None:
-        """保存数据到数据库"""
+        """Save data to database"""
         try:
             async with self._pool.acquire() as conn:
                 async with conn.cursor() as cursor:
@@ -293,37 +293,37 @@ class MysqlStorage(BaseStorage):
                     else:
                         await cursor.execute(f"INSERT INTO {table} (data) VALUES (%s)", (json_data,))
         except Exception as e:
-            logger.error(f"[Storage] 保存数据到{table}失败: {e}")
+            logger.error(f"[Storage] Failed to save data to {table}: {e}")
             raise
 
     async def load_tokens(self) -> Dict[str, Any]:
-        """加载token数据"""
+        """Load token data"""
         return await self._file.load_tokens()
 
     async def save_tokens(self, data: Dict[str, Any]) -> None:
-        """保存token数据"""
+        """Save token data"""
         await self._file.save_tokens(data)
         await self._save_db("grok_tokens", data)
 
     async def load_config(self) -> Dict[str, Any]:
-        """加载配置数据"""
+        """Load configuration data"""
         return await self._file.load_config()
 
     async def save_config(self, data: Dict[str, Any]) -> None:
-        """保存配置数据"""
+        """Save configuration data"""
         await self._file.save_config(data)
         await self._save_db("grok_settings", data)
 
     async def close(self) -> None:
-        """关闭连接"""
+        """Close connection"""
         if self._pool:
             self._pool.close()
             await self._pool.wait_closed()
-            logger.info("[Storage] MySQL连接池已关闭")
+            logger.info("[Storage] MySQL connection pool closed")
 
 
 class RedisStorage(BaseStorage):
-    """Redis存储实现"""
+    """Redis storage implementation"""
 
     def __init__(self, redis_url: str, data_dir: Path):
         self.redis_url = redis_url
@@ -332,35 +332,35 @@ class RedisStorage(BaseStorage):
         self._file = FileStorage(data_dir)
 
     async def init_db(self) -> None:
-        """初始化Redis"""
+        """Initialize Redis"""
         try:
             import redis.asyncio as redis
             parsed = self._parse_url(self.redis_url)
-            logger.info(f"[Storage] 解析Redis URL: host={parsed['host']}, port={parsed['port']}, db={parsed.get('db', 0)}, username={parsed.get('username')}, password={'***' if parsed.get('password') else None}")
+            logger.info(f"[Storage] Parsing Redis URL: host={parsed['host']}, port={parsed['port']}, db={parsed.get('db', 0)}, username={parsed.get('username')}, password={'***' if parsed.get('password') else None}")
 
-            # 创建Redis连接
+            # Create Redis connection
             self._redis = redis.Redis(
                 host=parsed['host'], port=parsed['port'], password=parsed.get('password'),
                 username=parsed.get('username'), db=parsed.get('db', 0),
                 encoding="utf-8", decode_responses=True
             )
 
-            # 测试连接
+            # Test connection
             await self._redis.ping()
-            logger.info(f"[Storage] Redis连接成功: {parsed['host']}:{parsed['port']}/{parsed['db']}")
+            logger.info(f"[Storage] Redis connection successful: {parsed['host']}:{parsed['port']}/{parsed['db']}")
 
-            # 初始化文件存储和同步数据
+            # Initialize file storage and synchronize data
             await self._file.init_db()
             await self._sync_data()
 
         except ImportError:
-            raise Exception("redis未安装")
+            raise Exception("redis not installed")
         except Exception as e:
-            logger.error(f"[Storage] Redis初始化失败: {e}")
+            logger.error(f"[Storage] Redis initialization failed: {e}")
             raise
 
     def _parse_url(self, url: str) -> Dict[str, Any]:
-        """解析Redis URL"""
+        """Parse Redis URL"""
         if url.startswith('redis://'):
             url = url[8:]
         parsed = urlparse(f'//{url}')
@@ -373,14 +373,14 @@ class RedisStorage(BaseStorage):
             'password': unquote(parsed.password) if parsed.password else None
         }
 
-        # Redis 6+ 默认用户名
+        # Redis 6+ default username
         if result['password'] and not result['username']:
             result['username'] = 'default'
 
         return result
 
     async def _sync_data(self) -> None:
-        """同步数据"""
+        """Synchronize data"""
         try:
             for key, file_func, key_name in [
                 ("grok:tokens", self._file.load_tokens, "sso"),
@@ -393,51 +393,51 @@ class RedisStorage(BaseStorage):
                         await self._file.save_tokens(parsed)
                     else:
                         await self._file.save_config(parsed)
-                    logger.info(f"[Storage] {key.split(':')[1]}数据已从Redis同步到文件")
+                    logger.info(f"[Storage] {key.split(':')[1]} data synchronized from Redis to file")
                 else:
                     file_data = await file_func()
                     if file_data.get(key_name) or (key == "grok:tokens" and file_data.get("ssoSuper")):
                         json_data = json.dumps(file_data, ensure_ascii=False)
                         await self._redis.set(key, json_data)
-                        logger.info(f"[Storage] {key.split(':')[1]}数据已从文件初始化到Redis")
+                        logger.info(f"[Storage] {key.split(':')[1]} data initialized from file to Redis")
         except Exception as e:
-            logger.warning(f"[Storage] 数据同步失败: {e}")
+            logger.warning(f"[Storage] Data synchronization failed: {e}")
 
     async def _save_redis(self, key: str, data: Dict[str, Any]) -> None:
-        """保存到Redis"""
+        """Save to Redis"""
         try:
             await self._redis.set(key, json.dumps(data, ensure_ascii=False))
         except Exception as e:
-            logger.error(f"[Storage] 保存到Redis失败: {e}")
+            logger.error(f"[Storage] Failed to save to Redis: {e}")
             raise
 
     async def load_tokens(self) -> Dict[str, Any]:
-        """加载token数据"""
+        """Load token data"""
         return await self._file.load_tokens()
 
     async def save_tokens(self, data: Dict[str, Any]) -> None:
-        """保存token数据"""
+        """Save token data"""
         await self._file.save_tokens(data)
         await self._save_redis("grok:tokens", data)
 
     async def load_config(self) -> Dict[str, Any]:
-        """加载配置数据"""
+        """Load configuration data"""
         return await self._file.load_config()
 
     async def save_config(self, data: Dict[str, Any]) -> None:
-        """保存配置数据"""
+        """Save configuration data"""
         await self._file.save_config(data)
         await self._save_redis("grok:settings", data)
 
     async def close(self) -> None:
-        """关闭连接"""
+        """Close connection"""
         if self._redis:
             await self._redis.close()
-            logger.info("[Storage] Redis连接已关闭")
+            logger.info("[Storage] Redis connection closed")
 
 
 class StorageManager:
-    """存储管理器"""
+    """Storage manager"""
 
     _instance: Optional['StorageManager'] = None
     _storage: Optional[BaseStorage] = None
@@ -449,7 +449,7 @@ class StorageManager:
         return cls._instance
 
     async def init(self) -> None:
-        """初始化存储"""
+        """Initialize storage"""
         if self._initialized:
             return
 
@@ -464,27 +464,27 @@ class StorageManager:
         }
 
         if mode in ("mysql", "redis") and not url:
-            raise ValueError(f"{mode.upper()}模式需要DATABASE_URL环境变量")
+            raise ValueError(f"{mode.upper()} mode requires DATABASE_URL environment variable")
 
         storage_class = storage_classes.get(mode, FileStorage)
         self._storage = storage_class(url, data_dir) if mode != "file" else storage_class(data_dir)
 
         await self._storage.init_db()
         self._initialized = True
-        logger.info(f"[Storage] 使用{mode}存储模式")
-        logger.info("[Storage] 存储管理器初始化完成")
+        logger.info(f"[Storage] Using {mode} storage mode")
+        logger.info("[Storage] Storage manager initialization completed")
 
     def get_storage(self) -> BaseStorage:
-        """获取存储实例"""
+        """Get storage instance"""
         if not self._initialized or not self._storage:
-            raise RuntimeError("StorageManager未初始化")
+            raise RuntimeError("StorageManager not initialized")
         return self._storage
 
     async def close(self) -> None:
-        """关闭存储"""
+        """Close storage"""
         if self._storage and hasattr(self._storage, 'close'):
             await self._storage.close()
 
 
-# 全局存储管理器实例
+# Global storage manager instance
 storage_manager = StorageManager()

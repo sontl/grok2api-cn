@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""FastMCP服务器实例"""
+"""FastMCP Server Instance"""
 
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
@@ -8,11 +8,11 @@ from app.core.config import setting
 
 
 def create_mcp_server() -> FastMCP:
-    """创建MCP服务器实例，如果配置了API密钥则启用认证"""
-    # 检查是否配置了API密钥
+    """Create MCP server instance, enable authentication if API key is configured"""
+    # Check if API key is configured
     api_key = setting.grok_config.get("api_key")
-    
-    # 如果配置了API密钥，则启用静态token验证
+
+    # If API key is configured, enable static token authentication
     auth = None
     if api_key:
         auth = StaticTokenVerifier(
@@ -24,8 +24,8 @@ def create_mcp_server() -> FastMCP:
             },
             required_scopes=["read"]
         )
-    
-    # 创建FastMCP实例
+
+    # Create FastMCP instance
     return FastMCP(
         name="Grok2API-MCP",
         instructions="MCP server providing Grok AI chat capabilities. Use ask_grok tool to interact with Grok AI models.",
@@ -33,11 +33,11 @@ def create_mcp_server() -> FastMCP:
     )
 
 
-# 创建全局MCP实例
+# Create global MCP instance
 mcp = create_mcp_server()
 
 
-# 注册ask_grok工具
+# Register ask_grok tool
 @mcp.tool
 async def ask_grok(
     query: str,
@@ -45,19 +45,19 @@ async def ask_grok(
     system_prompt: str = None
 ) -> str:
     """
-    调用Grok AI进行对话，尤其适用于当用户询问最新信息，需要调用搜索功能，或是想了解社交平台动态（如Twitter(X)、Reddit等）时。
+    Call Grok AI for conversation, especially suitable when users ask about latest information, need to call search functions, or want to understand social media dynamics (such as Twitter(X), Reddit, etc.).
 
     Args:
-        query: 用户的问题或指令
-        model: Grok模型名称,可选值: grok-3-fast(默认), grok-4-fast, grok-4-fast-expert, grok-4-expert, grok-4-heavy
-        system_prompt: 可选的系统提示词,用于设定AI的角色或行为约束
+        query: User's question or instruction
+        model: Grok model name, options: grok-3-fast (default), grok-4-fast, grok-4-fast-expert, grok-4-expert, grok-4-heavy
+        system_prompt: Optional system prompt, used to set AI's role or behavioral constraints
 
     Returns:
-        Grok AI的完整回复内容,可能包括文本和图片链接(Markdown格式)
+        Complete response from Grok AI, may include text and image links (Markdown format)
 
     Examples:
-        - 简单问答: ask_grok("什么是Python?")
-        - 指定模型: ask_grok("解释量子计算", model="grok-4-fast")
-        - 带系统提示: ask_grok("写一首诗", system_prompt="你是一位古典诗人")
+        - Simple Q&A: ask_grok("What is Python?")
+        - Specify model: ask_grok("Explain quantum computing", model="grok-4-fast")
+        - With system prompt: ask_grok("Write a poem", system_prompt="You are a classical poet")
     """
     return await ask_grok_impl(query, model, system_prompt)
