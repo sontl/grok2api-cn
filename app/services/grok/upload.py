@@ -2,6 +2,7 @@
 
 import base64
 import re
+import asyncio
 from typing import Tuple, Optional
 from urllib.parse import urlparse
 
@@ -33,67 +34,78 @@ class ImageUploadManager:
     @staticmethod
     async def upload(image_input: str, auth_token: str) -> str:
         """Upload image to Grok, supporting Base64 or URL"""
-        try:
-            if ImageUploadManager._is_url(image_input):
-                # Download URL image
-                image_buffer, mime_type = await ImageUploadManager._download(image_input)
+        if ImageUploadManager._is_url(image_input):
+            # Download URL image
+            image_buffer, mime_type = await ImageUploadManager._download(image_input)
 
-                # Get image info
-                file_name, _ = ImageUploadManager._get_info("", mime_type)
+            # Get image info
+            file_name, _ = ImageUploadManager._get_info("", mime_type)
 
-            else:
-                # Process base64 data
-                image_buffer = image_input.split(",")[1] if "data:image" in image_input else image_input
+        else:
+            # Process base64 data
+            image_buffer = image_input.split(",")[1] if "data:image" in image_input else image_input
 
-                # Get image info
-                file_name, mime_type = ImageUploadManager._get_info(image_input)
+            # Get image info
+            file_name, mime_type = ImageUploadManager._get_info(image_input)
 
-            # Build upload data
-            upload_data = {
-                "fileName": file_name,
-                "fileMimeType": mime_type,
-                "content": image_buffer,
-            }
+        # Build upload data
+        upload_data = {
+            "fileName": file_name,
+            "fileMimeType": mime_type,
+            "content": image_buffer,
+        }
 
-            # Get authentication token
-            if not auth_token:
-                raise GrokApiException("Authentication token is missing or empty", "NO_AUTH_TOKEN")
+        # Get authentication token
+        if not auth_token:
+            raise GrokApiException("Authentication token is missing or empty", "NO_AUTH_TOKEN")
 
-            cf_clearance = setting.grok_config.get("cf_clearance", "")
-            cookie = f"{auth_token};{cf_clearance}" if cf_clearance else auth_token
+        cf_clearance = setting.grok_config.get("cf_clearance", "")
+        cookie = f"{auth_token};{cf_clearance}" if cf_clearance else auth_token
 
-            proxy_url = setting.grok_config.get("proxy_url", "")
-            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+        proxy_url = setting.grok_config.get("proxy_url", "")
+        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
-            # Send async request
-            async with AsyncSession() as session:
-                response = await session.post(
-                    UPLOAD_ENDPOINT,
-                    headers={
-                        **get_dynamic_headers("/rest/app-chat/upload-file"),
-                        "Cookie": cookie,
-                    },
-                    json=upload_data,
-                    impersonate=IMPERSONATE_BROWSER,
-                    timeout=REQUEST_TIMEOUT,
-                    proxies=proxies,
-                )
+        # Retry configuration
+        max_retries = 3
+        retry_delay = 1  # seconds
 
-                # Check response
-                if response.status_code == 200:
-                    result = response.json()
-                    # print the result
-                    print(result)
-                    file_id = result.get("fileMetadataId", "")
-                    file_uri = result.get("fileUri", "")
-                    logger.debug(f"[Upload] Image upload successful, file ID: {file_id}")
-                    return file_id, file_uri
+        for attempt in range(max_retries):
+            try:
+                # Send async request
+                async with AsyncSession() as session:
+                    response = await session.post(
+                        UPLOAD_ENDPOINT,
+                        headers={
+                            **get_dynamic_headers("/rest/app-chat/upload-file"),
+                            "Cookie": cookie,
+                        },
+                        json=upload_data,
+                        impersonate=IMPERSONATE_BROWSER,
+                        timeout=REQUEST_TIMEOUT,
+                        proxies=proxies,
+                    )
 
-            return "", ""
+                    # Check response
+                    if response.status_code == 200:
+                        result = response.json()
+                        # print the result
+                        print(result)
+                        file_id = result.get("fileMetadataId", "")
+                        file_uri = result.get("fileUri", "")
+                        logger.debug(f"[Upload] Image upload successful, file ID: {file_id}")
+                        return file_id, file_uri
+                    
+                    logger.warning(f"[Upload] Upload attempt {attempt + 1}/{max_retries} failed with status: {response.status_code}")
 
-        except Exception as e:
-            logger.warning(f"[Upload] Image upload failed: {e}")
-            return "", ""
+            except Exception as e:
+                logger.warning(f"[Upload] Upload attempt {attempt + 1}/{max_retries} failed with error: {e}")
+            
+            # Wait before retrying, but not after the last attempt
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+
+        logger.error(f"[Upload] All {max_retries} upload attempts failed")
+        return "", ""
 
     @staticmethod
     def _is_url(image_input: str) -> bool:
