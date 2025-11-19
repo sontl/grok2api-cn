@@ -149,9 +149,24 @@ class GrokTokenManager:
             "super"
         ]
         
+        # 1. Direct match (fast)
         for key in keys_to_check:
             if key in self.token_data and sso_value in self.token_data[key]:
                 return key, self.token_data[key][sso_value]
+        
+        # 2. Fallback: Search for sso_value inside keys (for full cookie strings)
+        for key in keys_to_check:
+            if key in self.token_data:
+                for token_key, token_data in self.token_data[key].items():
+                    # Check if sso_value is part of the token_key
+                    if sso_value in token_key:
+                        return key, token_data
+                    
+                    # Also try to extract SSO from token_key and compare (more robust)
+                    if "sso=" in token_key:
+                        extracted = self._extract_sso(token_key)
+                        if extracted == sso_value:
+                            return key, token_data
         
         # --- Debug logging for not found (User Requested) ---
         logger.warning("="*50)
