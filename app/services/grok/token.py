@@ -152,10 +152,38 @@ class GrokTokenManager:
         
         # Debug logging for not found
         logger.warning(f"[Token] Token not found: {sso_value[:20]}... (len: {len(sso_value)})")
-        if TokenType.NORMAL.value in self.token_data:
-            keys = list(self.token_data[TokenType.NORMAL.value].keys())
-            if keys:
-                logger.debug(f"[Token] Available normal tokens (first 3): {[k[:20] + '... (len: ' + str(len(k)) + ')' for k in keys[:3]]}")
+        
+        # Deep comparison with the best candidate
+        best_candidate = None
+        best_key = None
+        
+        # Search in all checked keys
+        for key in keys_to_check:
+            if key in self.token_data:
+                for token in self.token_data[key]:
+                    # If lengths match, this is a strong candidate
+                    if len(token) == len(sso_value):
+                        best_candidate = token
+                        best_key = key
+                        break
+                if best_candidate:
+                    break
+        
+        if best_candidate:
+            logger.warning(f"[Token] Found candidate with same length in '{best_key}': {best_candidate[:20]}...")
+            if sso_value == best_candidate:
+                logger.error("[Token] WTF: Strings are equal but lookup failed!")
+            else:
+                for i, (c1, c2) in enumerate(zip(sso_value, best_candidate)):
+                    if c1 != c2:
+                        logger.warning(f"[Token] Mismatch at index {i}: '{c1}' (ord {ord(c1)}) vs '{c2}' (ord {ord(c2)})")
+                        break
+        else:
+            # Log available tokens if no candidate found
+            if TokenType.NORMAL.value in self.token_data:
+                keys = list(self.token_data[TokenType.NORMAL.value].keys())
+                if keys:
+                    logger.debug(f"[Token] Available normal tokens (first 3): {[k[:20] + '... (len: ' + str(len(k)) + ')' for k in keys[:3]]}")
         
         return None, None
 
@@ -170,8 +198,11 @@ class GrokTokenManager:
             if not token or not token.strip():
                 logger.debug("[Token] Skipping empty Token")
                 continue
+            
+            # Strip token to ensure clean storage
+            clean_token = token.strip()
 
-            self.token_data[token_type.value][token] = {
+            self.token_data[token_type.value][clean_token] = {
                 "createdTime": int(time.time() * 1000),
                 "remainingQueries": -1,
                 "heavyremainingQueries": -1,
