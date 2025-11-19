@@ -111,20 +111,40 @@ class GrokTokenManager:
         for part in parts:
             part = part.strip()
             if part.startswith('sso='):
-                return part[4:]
+                return part[4:].strip()
         
-        # Fallback: try to find sso= if it's not at the start of a segment (unlikely for valid cookies)
+        # Fallback: try to find sso= if it's not at the start of a segment
         if "sso=" in auth_token and "sso-rw=" not in auth_token:
-             return auth_token.split("sso=")[1].split(";")[0]
+             return auth_token.split("sso=")[1].split(";")[0].strip()
              
         logger.warning("[Token] Unable to extract SSO value from authentication token")
         return None
 
     def _find_token(self, sso_value: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
         """Find Token data, return (token_type, token_data)"""
-        for token_type in [TokenType.NORMAL.value, TokenType.SUPER.value]:
-            if sso_value in self.token_data[token_type]:
-                return token_type, self.token_data[token_type][sso_value]
+        # Check standard keys and potential legacy/alternative keys
+        keys_to_check = [
+            TokenType.NORMAL.value, 
+            TokenType.SUPER.value, 
+            "sso", 
+            "normal", 
+            "super"
+        ]
+        
+        for key in keys_to_check:
+            if key in self.token_data and sso_value in self.token_data[key]:
+                # Map legacy keys to standard types for return value if needed, 
+                # or just return the key found so the caller knows where it is.
+                # For now, returning the key found is safest.
+                return key, self.token_data[key][sso_value]
+        
+        # Debug logging for not found
+        logger.warning(f"[Token] Token not found: {sso_value[:20]}...")
+        if TokenType.NORMAL.value in self.token_data:
+            keys = list(self.token_data[TokenType.NORMAL.value].keys())
+            if keys:
+                logger.debug(f"[Token] Available normal tokens (first 3): {[k[:20] + '...' for k in keys[:3]]}")
+        
         return None, None
 
     async def add_token(self, tokens: list[str], token_type: TokenType) -> None:
