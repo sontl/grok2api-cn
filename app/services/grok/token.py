@@ -106,16 +106,31 @@ class GrokTokenManager:
         if not auth_token:
             return None
             
+        sso_value = None
         # Handle multiple cookies separated by ;
         parts = auth_token.split(';')
         for part in parts:
             part = part.strip()
             if part.startswith('sso='):
-                return part[4:].strip()
+                sso_value = part[4:].strip()
+                break
         
         # Fallback: try to find sso= if it's not at the start of a segment
-        if "sso=" in auth_token and "sso-rw=" not in auth_token:
-             return auth_token.split("sso=")[1].split(";")[0].strip()
+        if not sso_value and "sso=" in auth_token and "sso-rw=" not in auth_token:
+             try:
+                 sso_value = auth_token.split("sso=")[1].split(";")[0].strip()
+             except IndexError:
+                 pass
+        
+        if sso_value:
+            # Try to URL decode if it looks encoded (contains %)
+            if '%' in sso_value:
+                try:
+                    from urllib.parse import unquote
+                    sso_value = unquote(sso_value)
+                except Exception:
+                    pass
+            return sso_value
              
         logger.warning("[Token] Unable to extract SSO value from authentication token")
         return None
@@ -133,17 +148,14 @@ class GrokTokenManager:
         
         for key in keys_to_check:
             if key in self.token_data and sso_value in self.token_data[key]:
-                # Map legacy keys to standard types for return value if needed, 
-                # or just return the key found so the caller knows where it is.
-                # For now, returning the key found is safest.
                 return key, self.token_data[key][sso_value]
         
         # Debug logging for not found
-        logger.warning(f"[Token] Token not found: {sso_value[:20]}...")
+        logger.warning(f"[Token] Token not found: {sso_value[:20]}... (len: {len(sso_value)})")
         if TokenType.NORMAL.value in self.token_data:
             keys = list(self.token_data[TokenType.NORMAL.value].keys())
             if keys:
-                logger.debug(f"[Token] Available normal tokens (first 3): {[k[:20] + '...' for k in keys[:3]]}")
+                logger.debug(f"[Token] Available normal tokens (first 3): {[k[:20] + '... (len: ' + str(len(k)) + ')' for k in keys[:3]]}")
         
         return None, None
 
