@@ -21,7 +21,7 @@ from app.models.grok_models import TokenType
 # Create router
 router = APIRouter(tags=["Admin"])
 
-# 常量定义
+# Constant definitions
 STATIC_DIR = Path(__file__).parents[2] / "template"
 TEMP_DIR = Path(__file__).parents[3] / "data" / "temp"
 IMAGE_CACHE_DIR = TEMP_DIR / "image"
@@ -30,57 +30,57 @@ SESSION_EXPIRE_HOURS = 24
 BYTES_PER_KB = 1024
 BYTES_PER_MB = 1024 * 1024
 
-# 简单的会话存储
+# Simple session storage
 _sessions: Dict[str, datetime] = {}
 
 
-# === 请求/响应模型 ===
+# === Request/Response Models ===
 
 class LoginRequest(BaseModel):
-    """登录请求"""
+    """Login request"""
     username: str
     password: str
 
 
 class LoginResponse(BaseModel):
-    """登录响应"""
+    """Login response"""
     success: bool
     token: Optional[str] = None
     message: str
 
 
 class AddTokensRequest(BaseModel):
-    """批量添加Token请求"""
+    """Batch add token request"""
     tokens: List[str]
-    token_type: str  # "sso" 或 "ssoSuper"
+    token_type: str  # "sso" or "ssoSuper"
 
 
 class DeleteTokensRequest(BaseModel):
-    """批量删除Token请求"""
+    """Batch delete token request"""
     tokens: List[str]
-    token_type: str  # "sso" 或 "ssoSuper"
+    token_type: str  # "sso" or "ssoSuper"
 
 
 class TokenInfo(BaseModel):
-    """Token信息"""
+    """Token information"""
     token: str
     token_type: str
     created_time: Optional[int] = None
     remaining_queries: int
     heavy_remaining_queries: int
-    status: str  # "未使用"、"限流中"、"失效"、"正常"
-    tags: List[str] = []  # 标签列表
-    note: str = ""  # 备注
+    status: str  # "Unused", "Rate-limited", "Expired", "Active"
+    tags: List[str] = []  # Tag list
+    note: str = ""  # Note
 
 
 class TokenListResponse(BaseModel):
-    """Token列表响应"""
+    """Token list response"""
     success: bool
     data: List[TokenInfo]
     total: int
 
 
-# === 辅助函数 ===
+# === Helper Functions ===
 
 def validate_token_type(token_type_str: str) -> TokenType:
     """Validate and convert Token type string to enum"""
@@ -93,7 +93,7 @@ def validate_token_type(token_type_str: str) -> TokenType:
 
 
 def parse_created_time(created_time) -> Optional[int]:
-    """解析创建时间，统一处理不同格式"""
+    """Parse creation time, unify different formats"""
     if isinstance(created_time, str):
         return int(created_time) if created_time else None
     elif isinstance(created_time, int):
@@ -102,7 +102,7 @@ def parse_created_time(created_time) -> Optional[int]:
 
 
 def calculate_token_stats(tokens: Dict[str, Any], token_type: str) -> Dict[str, int]:
-    """计算Token统计信息"""
+    """Calculate token statistics"""
     total = len(tokens)
     expired = sum(1 for t in tokens.values() if t.get("status") == "expired")
 
@@ -187,37 +187,37 @@ def get_token_status(token_data: Dict[str, Any], token_type: str) -> str:
         return "Active"
 
 
-# === 页面路由 ===
+# === Page Routes ===
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page():
-    """登录页面"""
+    """Login page"""
     login_html = STATIC_DIR / "login.html"
     if login_html.exists():
         return login_html.read_text(encoding="utf-8")
-    raise HTTPException(status_code=404, detail="登录页面不存在")
+    raise HTTPException(status_code=404, detail="Login page does not exist")
 
 
 @router.get("/manage", response_class=HTMLResponse)
 async def manage_page():
-    """管理页面"""
+    """Management page"""
     admin_html = STATIC_DIR / "admin.html"
     if admin_html.exists():
         return admin_html.read_text(encoding="utf-8")
-    raise HTTPException(status_code=404, detail="管理页面不存在")
+    raise HTTPException(status_code=404, detail="Management page does not exist")
 
 
-# === API端点 ===
+# === API Endpoints ===
 
 @router.post("/api/login", response_model=LoginResponse)
 async def admin_login(request: LoginRequest) -> LoginResponse:
     """
-    管理员登录
-    
-    验证用户名和密码，成功后返回会话token。
+    Admin login
+
+    Verify username and password, return session token upon success.
     """
     try:
-        logger.debug(f"[Admin] 管理员登录尝试 - 用户名: {request.username}")
+        logger.debug(f"[Admin] Admin login attempt - Username: {request.username}")
 
         # Verify username and password
         expected_username = setting.global_config.get("admin_username", "")
@@ -461,19 +461,19 @@ async def update_settings(request: UpdateSettingsRequest, _: bool = Depends(veri
 
 
 def _calculate_dir_size(directory: Path) -> int:
-    """计算目录中所有文件的大小（字节）"""
+    """Calculate the size of all files in the directory (bytes)"""
     total_size = 0
     for file_path in directory.iterdir():
         if file_path.is_file():
             try:
                 total_size += file_path.stat().st_size
             except Exception as e:
-                logger.warning(f"[Admin] 无法获取文件大小: {file_path.name}, 错误: {str(e)}")
+                logger.warning(f"[Admin] Unable to get file size: {file_path.name}, Error: {str(e)}")
     return total_size
 
 
 def _format_size(size_bytes: int) -> str:
-    """格式化字节大小为可读字符串"""
+    """Format byte size to human-readable string"""
     size_mb = size_bytes / BYTES_PER_MB
     if size_mb < 1:
         size_kb = size_bytes / BYTES_PER_KB
@@ -483,25 +483,25 @@ def _format_size(size_bytes: int) -> str:
 
 @router.get("/api/cache/size")
 async def get_cache_size(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
-    """获取缓存大小"""
+    """Get cache size"""
     try:
-        logger.debug("[Admin] 开始获取缓存大小")
+        logger.debug("[Admin] Starting to get cache size")
 
-        # 计算图片缓存大小
+        # Calculate image cache size
         image_size = 0
         if IMAGE_CACHE_DIR.exists():
             image_size = _calculate_dir_size(IMAGE_CACHE_DIR)
-        
-        # 计算视频缓存大小
+
+        # Calculate video cache size
         video_size = 0
         if VIDEO_CACHE_DIR.exists():
             video_size = _calculate_dir_size(VIDEO_CACHE_DIR)
-        
-        # 总大小
+
+        # Total size
         total_size = image_size + video_size
 
-        logger.debug(f"[Admin] 缓存大小获取完成 - 图片: {_format_size(image_size)}, 视频: {_format_size(video_size)}, 总计: {_format_size(total_size)}")
-        
+        logger.debug(f"[Admin] Cache size retrieval completed - Images: {_format_size(image_size)}, Videos: {_format_size(video_size)}, Total: {_format_size(total_size)}")
+
         return {
             "success": True,
             "data": {
@@ -515,10 +515,10 @@ async def get_cache_size(_: bool = Depends(verify_admin_session)) -> Dict[str, A
         }
 
     except Exception as e:
-        logger.error(f"[Admin] 获取缓存大小异常 - 错误: {str(e)}")
+        logger.error(f"[Admin] Cache size retrieval exception - Error: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail={"error": f"获取缓存大小失败: {str(e)}", "code": "CACHE_SIZE_ERROR"}
+            detail={"error": f"Failed to get cache size: {str(e)}", "code": "CACHE_SIZE_ERROR"}
         )
 
 
@@ -660,20 +660,20 @@ async def clear_video_cache(_: bool = Depends(verify_admin_session)) -> Dict[str
 @router.get("/api/stats")
 async def get_stats(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
     """
-    获取统计信息
+    Get statistics
 
-    返回Token的统计数据。
+    Return token statistics.
     """
     try:
-        logger.debug("[Admin] 开始获取统计信息")
+        logger.debug("[Admin] Starting to get statistics")
 
         all_tokens_data = token_manager.get_tokens()
 
-        # 统计普通Token
+        # Statistics for normal tokens
         normal_tokens = all_tokens_data.get(TokenType.NORMAL.value, {})
         normal_stats = calculate_token_stats(normal_tokens, "normal")
 
-        # 统计Super Token
+        # Statistics for Super Token
         super_tokens = all_tokens_data.get(TokenType.SUPER.value, {})
         super_stats = calculate_token_stats(super_tokens, "super")
 
@@ -688,26 +688,26 @@ async def get_stats(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
             }
         }
 
-        logger.debug(f"[Admin] 统计信息获取成功 - 普通Token: {normal_stats['total']}, Super Token: {super_stats['total']}, 总计: {total_count}")
+        logger.debug(f"[Admin] Statistics retrieval successful - Normal tokens: {normal_stats['total']}, Super Token: {super_stats['total']}, Total: {total_count}")
         return stats
 
     except Exception as e:
-        logger.error(f"[Admin] 获取统计信息异常 - 错误: {str(e)}")
+        logger.error(f"[Admin] Statistics retrieval exception - Error: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail={"error": f"获取统计信息失败: {str(e)}", "code": "STATS_ERROR"}
+            detail={"error": f"Failed to get statistics: {str(e)}", "code": "STATS_ERROR"}
         )
 
 
 @router.get("/api/storage/mode")
 async def get_storage_mode(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
     """
-    获取当前存储模式
+    Get current storage mode
 
-    返回当前的存储模式（file/mysql/redis）。
+    Return current storage mode (file/mysql/redis).
     """
     try:
-        logger.debug("[Admin] 获取存储模式")
+        logger.debug("[Admin] Getting storage mode")
 
         import os
         storage_mode = os.getenv("STORAGE_MODE", "file").upper()
@@ -720,15 +720,15 @@ async def get_storage_mode(_: bool = Depends(verify_admin_session)) -> Dict[str,
         }
 
     except Exception as e:
-        logger.error(f"[Admin] 获取存储模式异常 - 错误: {str(e)}")
+        logger.error(f"[Admin] Storage mode retrieval exception - Error: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail={"error": f"获取存储模式失败: {str(e)}", "code": "STORAGE_MODE_ERROR"}
+            detail={"error": f"Failed to get storage mode: {str(e)}", "code": "STORAGE_MODE_ERROR"}
         )
 
 
 class UpdateTokenTagsRequest(BaseModel):
-    """更新Token标签请求"""
+    """Update token tags request"""
     token: str
     token_type: str
     tags: List[str]
@@ -740,51 +740,51 @@ async def update_token_tags(
     _: bool = Depends(verify_admin_session)
 ) -> Dict[str, Any]:
     """
-    更新Token标签
-    
-    为指定Token添加或修改标签。
+    Update token tags
+
+    Update tags for the specified token.
     """
     try:
-        logger.debug(f"[Admin] 更新Token标签 - Token: {request.token[:10]}..., Tags: {request.tags}")
+        logger.debug(f"[Admin] Update token tags - Token: {request.token[:10]}..., Tags: {request.tags}")
 
-        # 验证并转换token类型
+        # Validate and convert token type
         token_type = validate_token_type(request.token_type)
 
-        # 更新标签
+        # Update tags
         await token_manager.update_token_tags(request.token, token_type, request.tags)
 
-        logger.debug(f"[Admin] Token标签更新成功 - Token: {request.token[:10]}..., Tags: {request.tags}")
+        logger.debug(f"[Admin] Token tags updated successfully - Token: {request.token[:10]}..., Tags: {request.tags}")
 
         return {
             "success": True,
-            "message": "标签更新成功",
+            "message": "Tags updated successfully",
             "tags": request.tags
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Admin] Token标签更新异常 - Token: {request.token[:10]}..., 错误: {str(e)}")
+        logger.error(f"[Admin] Token tags update exception - Token: {request.token[:10]}..., Error: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail={"error": f"更新标签失败: {str(e)}", "code": "UPDATE_TAGS_ERROR"}
+            detail={"error": f"Failed to update tags: {str(e)}", "code": "UPDATE_TAGS_ERROR"}
         )
 
 
 @router.get("/api/tokens/tags/all")
 async def get_all_tags(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
     """
-    获取所有标签
-    
-    返回系统中所有Token使用的标签列表（去重）。
+    Get all tags
+
+    Return a list of all tags used by tokens in the system (deduplicated).
     """
     try:
-        logger.debug("[Admin] 获取所有标签")
+        logger.debug("[Admin] Getting all tags")
 
         all_tokens_data = token_manager.get_tokens()
         tags_set = set()
 
-        # 收集所有标签
+        # Collect all tags
         for token_type_data in all_tokens_data.values():
             for token_data in token_type_data.values():
                 tags = token_data.get("tags", [])
@@ -792,7 +792,7 @@ async def get_all_tags(_: bool = Depends(verify_admin_session)) -> Dict[str, Any
                     tags_set.update(tags)
 
         tags_list = sorted(list(tags_set))
-        logger.debug(f"[Admin] 标签获取成功 - 共 {len(tags_list)} 个标签")
+        logger.debug(f"[Admin] Tags retrieval successful - Total {len(tags_list)} tags")
 
         return {
             "success": True,
@@ -800,15 +800,15 @@ async def get_all_tags(_: bool = Depends(verify_admin_session)) -> Dict[str, Any
         }
 
     except Exception as e:
-        logger.error(f"[Admin] 获取标签异常 - 错误: {str(e)}")
+        logger.error(f"[Admin] Tags retrieval exception - Error: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail={"error": f"获取标签失败: {str(e)}", "code": "GET_TAGS_ERROR"}
+            detail={"error": f"Failed to get tags: {str(e)}", "code": "GET_TAGS_ERROR"}
         )
 
 
 class UpdateTokenNoteRequest(BaseModel):
-    """更新Token备注请求"""
+    """Update token note request"""
     token: str
     token_type: str
     note: str
@@ -820,39 +820,39 @@ async def update_token_note(
     _: bool = Depends(verify_admin_session)
 ) -> Dict[str, Any]:
     """
-    更新Token备注
-    
-    为指定Token添加或修改备注信息。
+    Update token note
+
+    Add or modify note information for the specified token.
     """
     try:
-        logger.debug(f"[Admin] 更新Token备注 - Token: {request.token[:10]}...")
+        logger.debug(f"[Admin] Update token note - Token: {request.token[:10]}...")
 
-        # 验证并转换token类型
+        # Validate and convert token type
         token_type = validate_token_type(request.token_type)
 
-        # 更新备注
+        # Update note
         await token_manager.update_token_note(request.token, token_type, request.note)
 
-        logger.debug(f"[Admin] Token备注更新成功 - Token: {request.token[:10]}...")
+        logger.debug(f"[Admin] Token note updated successfully - Token: {request.token[:10]}...")
 
         return {
             "success": True,
-            "message": "备注更新成功",
+            "message": "Note updated successfully",
             "note": request.note
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Admin] Token备注更新异常 - Token: {request.token[:10]}..., 错误: {str(e)}")
+        logger.error(f"[Admin] Token note update exception - Token: {request.token[:10]}..., Error: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail={"error": f"更新备注失败: {str(e)}", "code": "UPDATE_NOTE_ERROR"}
+            detail={"error": f"Failed to update note: {str(e)}", "code": "UPDATE_NOTE_ERROR"}
         )
 
 
 class TestTokenRequest(BaseModel):
-    """测试Token请求"""
+    """Test token request"""
     token: str
     token_type: str
 
