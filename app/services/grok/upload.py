@@ -120,22 +120,31 @@ class ImageUploadManager:
     @staticmethod
     async def _download(url: str) -> Tuple[str, str]:
         """Download image and convert to Base64"""
-        try:
-            async with AsyncSession() as session:
-                response = await session.get(url, timeout=5)
-                response.raise_for_status()
+        max_retries = 3
+        retry_delay = 2
+        timeout = 30
 
-                # Get content type
-                content_type = response.headers.get('content-type', DEFAULT_MIME_TYPE)
-                if not content_type.startswith('image/'):
-                    content_type = DEFAULT_MIME_TYPE
+        for attempt in range(max_retries):
+            try:
+                async with AsyncSession() as session:
+                    response = await session.get(url, timeout=timeout)
+                    response.raise_for_status()
 
-                # Convert to Base64
-                image_base64 = base64.b64encode(response.content).decode('utf-8')
-                return image_base64, content_type
-        except Exception as e:
-            logger.warning(f"[Upload] Image download failed: {e}")
-            return "", ""
+                    # Get content type
+                    content_type = response.headers.get('content-type', DEFAULT_MIME_TYPE)
+                    if not content_type.startswith('image/'):
+                        content_type = DEFAULT_MIME_TYPE
+
+                    # Convert to Base64
+                    image_base64 = base64.b64encode(response.content).decode('utf-8')
+                    return image_base64, content_type
+            except Exception as e:
+                logger.warning(f"[Upload] Image download attempt {attempt + 1}/{max_retries} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+
+        logger.error(f"[Upload] All {max_retries} image download attempts failed for url: {url}")
+        return "", ""
 
     @staticmethod
     def _get_info(image_data: str, mime_type: Optional[str] = None) -> Tuple[str, str]:
