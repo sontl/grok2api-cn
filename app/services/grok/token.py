@@ -103,8 +103,20 @@ class GrokTokenManager:
     @staticmethod
     def _extract_sso(auth_token: str) -> Optional[str]:
         """Extract SSO value from authentication token"""
-        if "sso=" in auth_token:
-            return auth_token.split("sso=")[1].split(";")[0]
+        if not auth_token:
+            return None
+            
+        # Handle multiple cookies separated by ;
+        parts = auth_token.split(';')
+        for part in parts:
+            part = part.strip()
+            if part.startswith('sso='):
+                return part[4:]
+        
+        # Fallback: try to find sso= if it's not at the start of a segment (unlikely for valid cookies)
+        if "sso=" in auth_token and "sso-rw=" not in auth_token:
+             return auth_token.split("sso=")[1].split(";")[0]
+             
         logger.warning("[Token] Unable to extract SSO value from authentication token")
         return None
 
