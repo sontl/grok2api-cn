@@ -270,6 +270,11 @@ class GrokTokenManager:
     def get_token(self, model: str, exclude_tokens: list[str] = None) -> str:
         """Get Token for specified model"""
         jwt_token = self.select_token(model, exclude_tokens)
+        
+        # If it's already a full cookie string, return as is
+        if "sso=" in jwt_token and "sso-rw=" in jwt_token:
+            return jwt_token
+            
         return f"sso-rw={jwt_token};sso={jwt_token}"
     
     def get_next_token(self, model: str, exclude_tokens: list[str] = None) -> Optional[str]:
@@ -307,6 +312,16 @@ class GrokTokenManager:
             for token_key, token_data in tokens_dict.items():
                 # Skip excluded tokens
                 if token_key in exclude_tokens:
+                    continue
+                
+                # Check if any excluded token is contained in the token_key (for full cookie strings)
+                # or if token_key is contained in any excluded token (unlikely but possible)
+                is_excluded = False
+                for excluded in exclude_tokens:
+                    if excluded in token_key or token_key in excluded:
+                        is_excluded = True
+                        break
+                if is_excluded:
                     continue
                     
                 # Skip expired tokens
