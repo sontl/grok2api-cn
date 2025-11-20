@@ -20,7 +20,7 @@ from app.core.exception import GrokApiException
 GROK_API_ENDPOINT = "https://grok.com/rest/app-chat/conversations/new"
 REQUEST_TIMEOUT = 120
 IMPERSONATE_BROWSER = "chrome133a"
-MAX_RETRY = 3  # Maximum retry attempts
+MAX_RETRY = 10  # Maximum retry attempts
 
 
 class GrokClient:

@@ -574,9 +574,17 @@ class GrokTokenManager:
                 logger.warning(f"[Token] Token with SSO value {sso_value[:10]}... not found")
                 return
 
-            # Increment priority
-            current_priority = token_data.get("priority", 0)
-            token_data["priority"] = current_priority + 1
+            # Find max priority across all tokens
+            max_priority = 0
+            for t_type in [TokenType.NORMAL.value, TokenType.SUPER.value]:
+                if t_type in self.token_data:
+                    for t_data in self.token_data[t_type].values():
+                        p = int(t_data.get("priority", 0))
+                        if p > max_priority:
+                            max_priority = p
+
+            # Set priority to max + 1
+            token_data["priority"] = max_priority + 1
 
             await self._save_data()
             logger.info(f"[Token] Token {sso_value[:10]}... priority increased to {token_data['priority']}")
