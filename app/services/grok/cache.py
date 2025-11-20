@@ -114,7 +114,7 @@ class ImageCacheService(CacheService):
 
     async def download_image(self, image_path: str, auth_token: str) -> Optional[Path]:
         """Download and cache image"""
-        return await self.download_file(image_path, auth_token, timeout=30.0)
+        return await self.download_file(image_path, auth_token, timeout=130.0)
 
     def get_cached(self, image_path: str) -> Optional[Path]:
         """Get cached image path"""
@@ -142,7 +142,7 @@ class ImageCacheService(CacheService):
     async def download_base64(self, image_path: str, auth_token: str) -> Optional[str]:
         """Download image and convert to base64 encoding (delete cache file immediately after conversion)"""
         try:
-            cache_path = await self.download_file(image_path, auth_token, timeout=30.0)
+            cache_path = await self.download_file(image_path, auth_token, timeout=130.0)
             if not cache_path:
                 return None
 
@@ -168,7 +168,7 @@ class VideoCacheService(CacheService):
 
     async def download_video(self, video_path: str, auth_token: str) -> Optional[Path]:
         """Download and cache video"""
-        return await self.download_file(video_path, auth_token, timeout=60.0)
+        return await self.download_file(video_path, auth_token, timeout=160.0)
 
     def get_cached(self, video_path: str) -> Optional[Path]:
         """Get cached video path"""
