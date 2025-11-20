@@ -25,7 +25,7 @@ class CacheService:
         filename = file_path.lstrip('/').replace('/', '-')
         return self.cache_dir / filename
 
-    async def download_file(self, file_path: str, auth_token: str, timeout: float = 30.0) -> Optional[Path]:
+    async def download_file(self, file_path: str, auth_token: str, timeout: float = 130.0) -> Optional[Path]:
         """Download and cache file"""
         cache_path = self._cache_path(file_path)
         if cache_path.exists():
