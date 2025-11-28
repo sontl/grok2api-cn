@@ -3,8 +3,11 @@
 import json
 import uuid
 import time
+import os
 import asyncio
 from typing import AsyncGenerator
+
+from app.services.grok.upscale import VideoUpscaleManager
 
 from app.core.config import setting
 from app.core.exception import GrokApiException
@@ -101,23 +104,40 @@ class GrokResponseProcessor:
 
                 # Extract video data
                 if video_resp := grok_resp.get("streamingVideoGenerationResponse"):
-                    if video_url := video_resp.get("videoUrl"):
-                        logger.debug(f"[Processor] Detected video generation: {video_url}")
-                        full_video_url = f"https://assets.grok.com/{video_url}"
-
-                        # Download and cache video
+                    video_url = video_resp.get("videoUrl")
+                    video_id = video_resp.get("videoId")
+                    is_upscaled = False
+                    # Auto upscale
+                    if setting.grok_config.get("auto_upscale", False) and video_id:
                         try:
-                            cache_path = await video_cache_service.download_video(f"/{video_url}", auth_token)
-                            if cache_path:
-                                video_path = video_url.replace('/', '-')
-                                base_url = setting.global_config.get("base_url", "")
-                                local_video_url = f"{base_url}/images/{video_path}" if base_url else f"/images/{video_path}"
-                                content = f'<video src="{local_video_url}" controls="controls" width="500" height="300"></video>\n'
-                            else:
-                                content = f'<video src="{full_video_url}" controls="controls" width="500" height="300"></video>\n'
+                            upscale_result = await VideoUpscaleManager.upscale(video_id, auth_token)
+                            if upscale_result and upscale_result.get("success"):
+                                video_url = upscale_result.get("hd_media_url")
+                                is_upscaled = True
                         except Exception as e:
-                            logger.warning(f"[Processor] Failed to cache video: {e}")
-                            content = f'<video src="{full_video_url}" controls="controls" width="500" height="300"></video>\n'
+                            logger.warning(f"[Processor] Auto upscale failed: {e}")
+
+                    if video_url:
+                        logger.debug(f"[Processor] Detected video generation: {video_url}")
+                        
+                        if is_upscaled:
+                            content = f'<video src="{video_url}" controls="controls" width="500" height="300"></video>\n'
+                        else:
+                            full_video_url = f"https://assets.grok.com/{video_url}"
+
+                            # Download and cache video
+                            try:
+                                cache_path = await video_cache_service.download_video(f"/{video_url}", auth_token)
+                                if cache_path:
+                                    video_path = video_url.replace('/', '-')
+                                    base_url = setting.global_config.get("base_url", "")
+                                    local_video_url = f"{base_url}/images/{video_path}" if base_url else f"/images/{video_path}"
+                                    content = f'<video src="{local_video_url}" controls="controls" width="500" height="300"></video>\n'
+                                else:
+                                    content = f'<video src="{full_video_url}" controls="controls" width="500" height="300"></video>\n'
+                            except Exception as e:
+                                logger.warning(f"[Processor] Failed to cache video: {e}")
+                                content = f'<video src="{full_video_url}" controls="controls" width="500" height="300"></video>\n'
 
                         # Return video response
                         result = OpenAIChatCompletionResponse(
@@ -325,20 +345,35 @@ class GrokResponseProcessor:
                         # 处理视频URL
                         if v_url:
                             logger.debug(f"[Processor] 视频生成完成")
-                            full_video_url = f"https://assets.grok.com/{v_url}"
-                            
-                            try:
-                                cache_path = await video_cache_service.download_video(f"/{v_url}", auth_token)
-                                if cache_path:
-                                    video_path = v_url.replace('/', '-')
-                                    base_url = setting.global_config.get("base_url", "")
-                                    local_video_url = f"{base_url}/images/{video_path}" if base_url else f"/images/{video_path}"
-                                    video_content = f'<video src="{local_video_url}" controls="controls"></video>\n'
-                                else:
+                            video_id = video_resp.get("videoId")
+                            is_upscaled = False
+                            # Auto upscale
+                            if setting.grok_config.get("auto_upscale", False) and video_id:
+                                try:
+                                    upscale_result = await VideoUpscaleManager.upscale(video_id, auth_token)
+                                    if upscale_result and upscale_result.get("success"):
+                                        v_url = upscale_result.get("hd_media_url")
+                                        is_upscaled = True
+                                except Exception as e:
+                                    logger.warning(f"[Processor] Auto upscale failed: {e}")
+
+                            if is_upscaled:
+                                video_content = f'<video src="{v_url}" controls="controls"></video>\n'
+                            else:
+                                full_video_url = f"https://assets.grok.com/{v_url}"
+                                
+                                try:
+                                    cache_path = await video_cache_service.download_video(f"/{v_url}", auth_token)
+                                    if cache_path:
+                                        video_path = v_url.replace('/', '-')
+                                        base_url = setting.global_config.get("base_url", "")
+                                        local_video_url = f"{base_url}/images/{video_path}" if base_url else f"/images/{video_path}"
+                                        video_content = f'<video src="{local_video_url}" controls="controls"></video>\n'
+                                    else:
+                                        video_content = f'<video src="{full_video_url}" controls="controls"></video>\n'
+                                except Exception as e:
+                                    logger.warning(f"[Processor] 缓存视频失败: {e}")
                                     video_content = f'<video src="{full_video_url}" controls="controls"></video>\n'
-                            except Exception as e:
-                                logger.warning(f"[Processor] 缓存视频失败: {e}")
-                                video_content = f'<video src="{full_video_url}" controls="controls"></video>\n'
                             
                             yield make_chunk(video_content)
                             chunk_index += 1

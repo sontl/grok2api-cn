@@ -14,6 +14,7 @@ from app.services.grok.statsig import get_dynamic_headers
 from app.services.grok.token import token_manager
 from app.services.grok.upload import ImageUploadManager
 from app.services.grok.create import PostCreateManager
+from app.services.grok.upscale import VideoUpscaleManager
 from app.core.exception import GrokApiException
 
 # Constant definitions
@@ -46,6 +47,16 @@ class GrokClient:
 
         # Retry logic
         return await GrokClient._try(model, content, image_urls, model_name, model_mode, is_video_model, stream)
+
+    @staticmethod
+    async def upscale_video(video_id: str, model: str = "grok-3"):
+        """Upscale video to HD"""
+        # Get available token
+        auth_token = token_manager.get_token(model)
+        if not auth_token:
+            raise GrokApiException("No available token found", "NO_AVAILABLE_TOKEN")
+            
+        return await VideoUpscaleManager.upscale(video_id, auth_token)
 
     @staticmethod
     async def _try(model: str, content: str, image_urls: List[str], model_name: str, model_mode: str, is_video: bool, stream: bool):
