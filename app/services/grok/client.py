@@ -33,6 +33,7 @@ class GrokClient:
         model = openai_request["model"]
         messages = openai_request["messages"]
         stream = openai_request.get("stream", False)
+        auto_upscale = openai_request.get("auto_upscale")
 
         # Extract message content and image URLs
         content, image_urls = GrokClient._extract_content(messages)
@@ -46,7 +47,7 @@ class GrokClient:
                 image_urls = image_urls[:1]
 
         # Retry logic
-        return await GrokClient._try(model, content, image_urls, model_name, model_mode, is_video_model, stream)
+        return await GrokClient._try(model, content, image_urls, model_name, model_mode, is_video_model, stream, auto_upscale)
 
     @staticmethod
     async def upscale_video(video_id: str, model: str = "grok-3"):
@@ -59,7 +60,7 @@ class GrokClient:
         return await VideoUpscaleManager.upscale(video_id, auth_token)
 
     @staticmethod
-    async def _try(model: str, content: str, image_urls: List[str], model_name: str, model_mode: str, is_video: bool, stream: bool):
+    async def _try(model: str, content: str, image_urls: List[str], model_name: str, model_mode: str, is_video: bool, stream: bool, auto_upscale: bool = None):
         """Request execution with retry and token rotation"""
         last_err = None
         tried_tokens = []  # Track SSO tokens that have been tried
@@ -105,7 +106,7 @@ class GrokClient:
 
                 # Build and send request
                 payload = GrokClient._build_payload(content, model_name, model_mode, imgs, uris, is_video, post_id)
-                result = await GrokClient._send_request(payload, auth_token, model, stream, post_id)
+                result = await GrokClient._send_request(payload, auth_token, model, stream, post_id, auto_upscale)
                 
                 # Success! Mark this token as prioritized
                 asyncio.create_task(token_manager.mark_token_priority(auth_token))
@@ -242,7 +243,7 @@ class GrokClient:
         return payload
 
     @staticmethod
-    async def _send_request(payload: dict, auth_token: str, model: str, stream: bool, post_id: str = None):
+    async def _send_request(payload: dict, auth_token: str, model: str, stream: bool, post_id: str = None, auto_upscale: bool = None):
         """Send HTTP request to Grok API"""
         # Validate authentication token
         if not auth_token:
@@ -287,7 +288,7 @@ class GrokClient:
             asyncio.create_task(token_manager.reset_failure(auth_token))
 
             # Process and return response
-            return await GrokClient._process_response(response, auth_token, model, stream)
+            return await GrokClient._process_response(response, auth_token, model, stream, auto_upscale)
 
         except curl_requests.RequestsError as e:
             logger.error(f"[Client] Network request error: {e}")
@@ -348,13 +349,13 @@ class GrokClient:
         )
 
     @staticmethod
-    async def _process_response(response, auth_token: str, model: str, stream: bool):
+    async def _process_response(response, auth_token: str, model: str, stream: bool, auto_upscale: bool = None):
         """Process API response"""
         if stream:
-            result = GrokResponseProcessor.process_stream(response, auth_token)
+            result = GrokResponseProcessor.process_stream(response, auth_token, auto_upscale)
             asyncio.create_task(GrokClient._update_rate_limits(auth_token, model))
         else:
-            result = await GrokResponseProcessor.process_normal(response, auth_token, model)
+            result = await GrokResponseProcessor.process_normal(response, auth_token, model, auto_upscale)
             asyncio.create_task(GrokClient._update_rate_limits(auth_token, model))
 
         return result

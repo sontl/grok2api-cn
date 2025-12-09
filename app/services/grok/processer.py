@@ -81,7 +81,7 @@ class GrokResponseProcessor:
     """Grok API Response Processor"""
 
     @staticmethod
-    async def process_normal(response, auth_token: str, model: str = None) -> OpenAIChatCompletionResponse:
+    async def process_normal(response, auth_token: str, model: str = None, auto_upscale: bool = None) -> OpenAIChatCompletionResponse:
         """Process non-streaming response"""
         response_closed = False
         try:
@@ -105,19 +105,20 @@ class GrokResponseProcessor:
                 # Extract video data
                 if video_resp := grok_resp.get("streamingVideoGenerationResponse"):
                     video_url = video_resp.get("videoUrl")
-                    video_id = video_resp.get("videoId")
-                    is_upscaled = False
-                    # Auto upscale
-                    if setting.grok_config.get("auto_upscale", False) and video_id:
-                        try:
-                            upscale_result = await VideoUpscaleManager.upscale(video_id, auth_token)
-                            if upscale_result and upscale_result.get("success"):
-                                video_url = upscale_result.get("hd_media_url")
-                                is_upscaled = True
-                        except Exception as e:
-                            logger.warning(f"[Processor] Auto upscale failed: {e}")
-
+                    
                     if video_url:
+                        is_upscaled = False
+                        # Auto upscale - only when we have the video URL
+                        if auto_upscale:
+                            video_id = video_resp.get("videoId")
+                            if video_id:
+                                try:
+                                    upscale_result = await VideoUpscaleManager.upscale(video_id, auth_token)
+                                    if upscale_result and upscale_result.get("success"):
+                                        video_url = upscale_result.get("hd_media_url")
+                                        is_upscaled = True
+                                except Exception as e:
+                                    logger.warning(f"[Processor] Auto upscale failed: {e}")
                         logger.debug(f"[Processor] Detected video generation: {video_url}")
                         
                         if is_upscaled:
@@ -240,7 +241,7 @@ class GrokResponseProcessor:
                     logger.warning(f"[Processor] Error closing response object: {e}")
 
     @staticmethod
-    async def process_stream(response, auth_token: str) -> AsyncGenerator[str, None]:
+    async def process_stream(response, auth_token: str, auto_upscale: bool = None) -> AsyncGenerator[str, None]:
         """Process streaming response"""
         # 流式生成状态
         is_image = False
@@ -342,20 +343,21 @@ class GrokResponseProcessor:
                                 yield make_chunk(content)
                                 chunk_index += 1
                         
-                        # 处理视频URL
+                        # 处理视频URL - only when video generation is complete (has videoUrl)
                         if v_url:
                             logger.debug(f"[Processor] 视频生成完成")
-                            video_id = video_resp.get("videoId")
                             is_upscaled = False
-                            # Auto upscale
-                            if setting.grok_config.get("auto_upscale", False) and video_id:
-                                try:
-                                    upscale_result = await VideoUpscaleManager.upscale(video_id, auth_token)
-                                    if upscale_result and upscale_result.get("success"):
-                                        v_url = upscale_result.get("hd_media_url")
-                                        is_upscaled = True
-                                except Exception as e:
-                                    logger.warning(f"[Processor] Auto upscale failed: {e}")
+                            # Auto upscale - only when we have the video URL
+                            if auto_upscale:
+                                video_id = video_resp.get("videoId")
+                                if video_id:
+                                    try:
+                                        upscale_result = await VideoUpscaleManager.upscale(video_id, auth_token)
+                                        if upscale_result and upscale_result.get("success"):
+                                            v_url = upscale_result.get("hd_media_url")
+                                            is_upscaled = True
+                                    except Exception as e:
+                                        logger.warning(f"[Processor] Auto upscale failed: {e}")
 
                             if is_upscaled:
                                 video_content = f'<video src="{v_url}" controls="controls"></video>\n'

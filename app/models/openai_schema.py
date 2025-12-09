@@ -14,6 +14,7 @@ class OpenAIChatRequest(BaseModel):
     temperature: Optional[float] = Field(0.7, ge=0, le=2, description="Sampling temperature")
     max_tokens: Optional[int] = Field(None, ge=1, le=100000, description="Maximum token count")
     top_p: Optional[float] = Field(1.0, ge=0, le=1, description="Sampling parameter")
+    auto_upscale: Optional[bool] = Field(None, description="Auto upscale video to HD")
 
     @classmethod
     @field_validator('messages')
