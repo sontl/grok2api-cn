@@ -1,9 +1,9 @@
 """Grok API Client Module"""
 
 import asyncio
+import orjson
 import json
-from typing import Dict, List, Tuple, Any
-
+from typing import Dict, List, Tuple, Any, Optional
 from curl_cffi import requests as curl_requests
 
 from app.core.config import setting
@@ -17,15 +17,28 @@ from app.services.grok.create import PostCreateManager
 from app.services.grok.upscale import VideoUpscaleManager
 from app.core.exception import GrokApiException
 
+
 # Constant definitions
-GROK_API_ENDPOINT = "https://grok.com/rest/app-chat/conversations/new"
+API_ENDPOINT = "https://grok.com/rest/app-chat/conversations/new"
 REQUEST_TIMEOUT = 120
 IMPERSONATE_BROWSER = "chrome133a"
-MAX_RETRY = 10  # Maximum retry attempts
+MAX_RETRY = 10
+MAX_UPLOADS = 20
 
 
 class GrokClient:
     """Grok API Client"""
+
+    _upload_sem = None  # Lazy initialization
+
+    @staticmethod
+    def _get_upload_semaphore():
+        """Get upload semaphore (dynamic configuration)"""
+        if GrokClient._upload_sem is None:
+            max_concurrency = setting.global_config.get("max_upload_concurrency", MAX_UPLOADS)
+            GrokClient._upload_sem = asyncio.Semaphore(max_concurrency)
+            logger.debug(f"[Client] Initialized upload concurrency limit: {max_concurrency}")
+        return GrokClient._upload_sem
 
     @staticmethod
     async def openai_to_grok(openai_request: dict):
@@ -89,6 +102,7 @@ class GrokClient:
                 if sso_value and sso_value not in tried_tokens:
                     tried_tokens.append(sso_value)
                 logger.debug(f"[Client] Using token {auth_token[:250]}...")
+                
                 # Upload images
                 imgs, uris = await GrokClient._upload_imgs(image_urls, auth_token)
 
@@ -172,24 +186,33 @@ class GrokClient:
             # Handle plain text messages
             else:
                 content_parts.append(msg_content)
-
+        
         return "".join(content_parts), image_urls
 
     @staticmethod
     async def _upload_imgs(image_urls: List[str], auth_token: str) -> Tuple[List[str], List[str]]:
         """Upload images and return attachment ID list"""
+        if not image_urls:
+            return [], []
+
+        async def upload_limited(url):
+            async with GrokClient._get_upload_semaphore():
+                return await ImageUploadManager.upload(url, auth_token)
+
+        # Upload all images concurrently with semaphore
+        results = await asyncio.gather(*[upload_limited(url) for url in image_urls], return_exceptions=True)
+        
         image_attachments = []
         image_uris = []
-        # Upload all images concurrently
-        tasks = [ImageUploadManager.upload(url, auth_token) for url in image_urls]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for url, (file_id, file_uri) in zip(image_urls, results):
-            if isinstance(file_id, Exception):
-                logger.warning(f"[Client] Image upload failed: {url}, Error: {file_id}")
-            elif file_id:
-                image_attachments.append(file_id)
-                image_uris.append(file_uri)
+        for url, result in zip(image_urls, results):
+            if isinstance(result, Exception):
+                logger.warning(f"[Client] Image upload failed: {url}, Error: {result}")
+            elif isinstance(result, tuple) and len(result) == 2:
+                file_id, file_uri = result
+                if file_id:
+                    image_attachments.append(file_id)
+                    image_uris.append(file_uri)
 
         return image_attachments, image_uris
 
@@ -216,7 +239,7 @@ class GrokClient:
             "webpageUrls": [],
             "disableTextFollowUps": True,
             "responseMetadata": {"requestModelDetails": {"modelId": model_name}},
-            "disableMemory": False,
+            "disableMemory": False,  # Note: upstream says False, Head said False.
             "forceSideBySide": False,
             "modelMode": model_mode,
             "isAsyncChat": False
@@ -263,21 +286,16 @@ class GrokClient:
             proxy_url = setting.get_service_proxy()
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
-            # Build request parameters
-            request_kwargs = {
-                "headers": headers,
-                "data": json.dumps(payload),
-                "impersonate": IMPERSONATE_BROWSER,
-                "timeout": REQUEST_TIMEOUT,
-                "stream": True,
-                "proxies": proxies
-            }
-
             # Execute synchronous HTTP request in thread pool to avoid blocking event loop
             response = await asyncio.to_thread(
                 curl_requests.post,
-                GROK_API_ENDPOINT,
-                **request_kwargs
+                API_ENDPOINT,
+                headers=headers,
+                data=orjson.dumps(payload),
+                impersonate=IMPERSONATE_BROWSER,
+                timeout=REQUEST_TIMEOUT,
+                stream=True,
+                proxies=proxies
             )
 
             # Handle non-success response
@@ -301,13 +319,8 @@ class GrokClient:
         except Exception as e:
             # Handle potential class mismatch for GrokApiException
             if type(e).__name__ == 'GrokApiException':
-                logger.warning(f"[Client] Caught GrokApiException via generic handler. Re-raising. Type: {type(e)}")
-                raise GrokApiException(
-                    message=getattr(e, 'message', str(e)),
-                    error_code=getattr(e, 'error_code', 'UNKNOWN'),
-                    details=getattr(e, 'details', {})
-                )
-            
+                raise
+
             logger.error(f"[Client] Unknown request error: {type(e).__name__}: {e}")
             raise GrokApiException(f"Request processing error: {e}", "REQUEST_ERROR") from e
 

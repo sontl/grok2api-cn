@@ -1,7 +1,7 @@
 """Storage abstraction layer - supports file, MySQL and Redis storage"""
 
 import os
-import json
+import orjson
 import toml
 import asyncio
 import warnings
@@ -60,68 +60,66 @@ class FileStorage(BaseStorage):
         """Initialize file storage"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize token file
         if not self.token_file.exists():
-            await self._write_file(self.token_file, json.dumps({"sso": {}, "ssoSuper": {}}, indent=2, ensure_ascii=False))
-            logger.info("[Storage] Creating new token file")
+            await self._write(self.token_file, orjson.dumps({"sso": {}, "ssoSuper": {}}, option=orjson.OPT_INDENT_2).decode())
+            logger.info("[Storage] Created token file")
 
-        # Initialize configuration file
         if not self.config_file.exists():
-            default_config = {
+            default = {
                 "global": {"api_keys": [], "admin_username": "admin", "admin_password": "admin"},
                 "grok": {"proxy_url": "", "cf_clearance": "", "x_statsig_id": ""}
             }
-            await self._write_file(self.config_file, toml.dumps(default_config))
-            logger.info("[Storage] Creating new configuration file")
+            await self._write(self.config_file, toml.dumps(default))
+            logger.info("[Storage] Created configuration file")
 
-    async def _read_file(self, file_path: Path) -> str:
-        """Read file content"""
-        async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+    async def _read(self, path: Path) -> str:
+        """Read file"""
+        async with aiofiles.open(path, "r", encoding="utf-8") as f:
             return await f.read()
 
-    async def _write_file(self, file_path: Path, content: str) -> None:
-        """Write file content"""
-        async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+    async def _write(self, path: Path, content: str) -> None:
+        """Write file"""
+        async with aiofiles.open(path, "w", encoding="utf-8") as f:
             await f.write(content)
 
-    async def _load_json(self, file_path: Path, default: Dict[str, Any], lock: asyncio.Lock) -> Dict[str, Any]:
-        """Load JSON file"""
+    async def _load_json(self, path: Path, default: Dict, lock: asyncio.Lock) -> Dict[str, Any]:
+        """Load JSON"""
         try:
             async with lock:
-                if not file_path.exists():
+                if not path.exists():
                     return default
-                return json.loads(await self._read_file(file_path))
+                return orjson.loads(await self._read(path))
         except Exception as e:
-            logger.error(f"[Storage] Failed to load {file_path.name}: {e}")
+            logger.error(f"[Storage] Failed to load {path.name}: {e}")
             return default
 
-    async def _save_json(self, file_path: Path, data: Dict[str, Any], lock: asyncio.Lock) -> None:
-        """Save JSON file"""
+    async def _save_json(self, path: Path, data: Dict, lock: asyncio.Lock) -> None:
+        """Save JSON"""
         try:
             async with lock:
-                await self._write_file(file_path, json.dumps(data, indent=2, ensure_ascii=False))
+                await self._write(path, orjson.dumps(data, option=orjson.OPT_INDENT_2).decode())
         except Exception as e:
-            logger.error(f"[Storage] Failed to save {file_path.name}: {e}")
+            logger.error(f"[Storage] Failed to save {path.name}: {e}")
             raise
 
-    async def _load_toml(self, file_path: Path, default: Dict[str, Any], lock: asyncio.Lock) -> Dict[str, Any]:
-        """Load TOML file"""
+    async def _load_toml(self, path: Path, default: Dict, lock: asyncio.Lock) -> Dict[str, Any]:
+        """Load TOML"""
         try:
             async with lock:
-                if not file_path.exists():
+                if not path.exists():
                     return default
-                return toml.loads(await self._read_file(file_path))
+                return toml.loads(await self._read(path))
         except Exception as e:
-            logger.error(f"[Storage] Failed to load {file_path.name}: {e}")
+            logger.error(f"[Storage] Failed to load {path.name}: {e}")
             return default
 
-    async def _save_toml(self, file_path: Path, data: Dict[str, Any], lock: asyncio.Lock) -> None:
-        """Save TOML file"""
+    async def _save_toml(self, path: Path, data: Dict, lock: asyncio.Lock) -> None:
+        """Save TOML"""
         try:
             async with lock:
-                await self._write_file(file_path, toml.dumps(data))
+                await self._write(path, toml.dumps(data))
         except Exception as e:
-            logger.error(f"[Storage] Failed to save {file_path.name}: {e}")
+            logger.error(f"[Storage] Failed to save {path.name}: {e}")
             raise
 
     async def load_tokens(self) -> Dict[str, Any]:
@@ -155,22 +153,16 @@ class MysqlStorage(BaseStorage):
         try:
             import aiomysql
             parsed = self._parse_url(self.database_url)
-            logger.info(f"[Storage] Parsing database connection: {parsed['user']}@{parsed['host']}:{parsed['port']}/{parsed['db']}")
+            logger.info(f"[Storage] MySQL: {parsed['user']}@{parsed['host']}:{parsed['port']}/{parsed['db']}")
 
-            # Create database
             await self._create_db(parsed)
-
-            # Create connection pool
             self._pool = await aiomysql.create_pool(
                 host=parsed['host'], port=parsed['port'], user=parsed['user'],
                 password=parsed['password'], db=parsed['db'], charset="utf8mb4",
                 autocommit=True, maxsize=10
             )
 
-            # Create tables
             await self._create_tables()
-
-            # Initialize file storage and synchronize data
             await self._file.init_db()
             await self._sync_data()
 
@@ -181,26 +173,26 @@ class MysqlStorage(BaseStorage):
             raise
 
     def _parse_url(self, url: str) -> Dict[str, Any]:
-        """Parse database URL"""
-        parsed = urlparse(url)
+        """Parse URL"""
+        p = urlparse(url)
         return {
-            'user': unquote(parsed.username) if parsed.username else "",
-            'password': unquote(parsed.password) if parsed.password else "",
-            'host': parsed.hostname,
-            'port': parsed.port or 3306,
-            'db': parsed.path[1:] if parsed.path else "grok2api"
+            'user': unquote(p.username) if p.username else "",
+            'password': unquote(p.password) if p.password else "",
+            'host': p.hostname,
+            'port': p.port or 3306,
+            'db': p.path[1:] if p.path else "grok2api"
         }
 
-    async def _create_db(self, parsed: Dict[str, Any]) -> None:
+    async def _create_db(self, parsed: Dict) -> None:
         """Create database"""
         import aiomysql
-        temp_pool = await aiomysql.create_pool(
+        pool = await aiomysql.create_pool(
             host=parsed['host'], port=parsed['port'], user=parsed['user'],
             password=parsed['password'], charset="utf8mb4", autocommit=True, maxsize=1
         )
 
         try:
-            async with temp_pool.acquire() as conn:
+            async with pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     with warnings.catch_warnings():
                         warnings.filterwarnings('ignore', message='.*database exists')
@@ -208,10 +200,10 @@ class MysqlStorage(BaseStorage):
                             f"CREATE DATABASE IF NOT EXISTS `{parsed['db']}` "
                             f"CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
                         )
-                    logger.info(f"[Storage] MySQL database '{parsed['db']}' is ready")
+                    logger.info(f"[Storage] Database '{parsed['db']}' is ready")
         finally:
-            temp_pool.close()
-            await temp_pool.wait_closed()
+            pool.close()
+            await pool.wait_closed()
 
     async def _create_tables(self) -> None:
         """Create tables"""
@@ -240,7 +232,7 @@ class MysqlStorage(BaseStorage):
                     warnings.filterwarnings('ignore', message='.*already exists')
                     for sql in tables.values():
                         await cursor.execute(sql)
-                logger.info("[Storage] MySQL tables created/verified successfully")
+                logger.info("[Storage] MySQL tables ready")
 
     async def _sync_data(self) -> None:
         """Synchronize data"""
@@ -252,39 +244,33 @@ class MysqlStorage(BaseStorage):
                         await self._file.save_tokens(data)
                     else:
                         await self._file.save_config(data)
-                    logger.info(f"[Storage] {table.split('_')[1]} data synchronized from database to file")
+                    logger.info(f"[Storage] {table.split('_')[1]} data synchronized from DB")
                 else:
-                    if table == "grok_tokens":
-                        file_data = await self._file.load_tokens()
-                        if file_data.get(key) or file_data.get("ssoSuper"):
-                            await self._save_db(table, file_data)
-                            logger.info("[Storage] Token data initialized from file to database")
-                    else:
-                        file_data = await self._file.load_config()
-                        if file_data.get(key) or file_data.get("grok"):
-                            await self._save_db(table, file_data)
-                            logger.info("[Storage] Configuration data initialized from file to database")
+                    file_data = await (self._file.load_tokens() if table == "grok_tokens" else self._file.load_config())
+                    if file_data.get(key) or (table == "grok_tokens" and file_data.get("ssoSuper")):
+                        await self._save_db(table, file_data)
+                        logger.info(f"[Storage] {table.split('_')[1]} data initialized to DB")
         except Exception as e:
-            logger.warning(f"[Storage] Data synchronization failed: {e}")
+            logger.warning(f"[Storage] Synchronization failed: {e}")
 
-    async def _load_db(self, table: str) -> Optional[Dict[str, Any]]:
-        """Load data from database"""
+    async def _load_db(self, table: str) -> Optional[Dict]:
+        """Load from DB"""
         try:
             async with self._pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute(f"SELECT data FROM {table} ORDER BY id DESC LIMIT 1")
                     result = await cursor.fetchone()
-                    return json.loads(result[0]) if result else None
+                    return orjson.loads(result[0]) if result else None
         except Exception as e:
-            logger.error(f"[Storage] Failed to load {table} from database: {e}")
+            logger.error(f"[Storage] Failed to load {table}: {e}")
             return None
 
-    async def _save_db(self, table: str, data: Dict[str, Any]) -> None:
-        """Save data to database"""
+    async def _save_db(self, table: str, data: Dict) -> None:
+        """Save to DB"""
         try:
             async with self._pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    json_data = json.dumps(data, ensure_ascii=False)
+                    json_data = orjson.dumps(data).decode()
                     await cursor.execute(f"SELECT id FROM {table} ORDER BY id DESC LIMIT 1")
                     result = await cursor.fetchone()
 
@@ -293,7 +279,7 @@ class MysqlStorage(BaseStorage):
                     else:
                         await cursor.execute(f"INSERT INTO {table} (data) VALUES (%s)", (json_data,))
         except Exception as e:
-            logger.error(f"[Storage] Failed to save data to {table}: {e}")
+            logger.error(f"[Storage] Failed to save {table}: {e}")
             raise
 
     async def load_tokens(self) -> Dict[str, Any]:
@@ -319,7 +305,7 @@ class MysqlStorage(BaseStorage):
         if self._pool:
             self._pool.close()
             await self._pool.wait_closed()
-            logger.info("[Storage] MySQL connection pool closed")
+            logger.info("[Storage] MySQL connection closed")
 
 
 class RedisStorage(BaseStorage):
@@ -334,22 +320,21 @@ class RedisStorage(BaseStorage):
     async def init_db(self) -> None:
         """Initialize Redis"""
         try:
-            import redis.asyncio as redis
-            parsed = self._parse_url(self.redis_url)
-            logger.info(f"[Storage] Parsing Redis URL: host={parsed['host']}, port={parsed['port']}, db={parsed.get('db', 0)}, username={parsed.get('username')}, password={'***' if parsed.get('password') else None}")
+            import redis.asyncio as aioredis
+            
+            # Using from_url for simpler Redis connection logic (upstream style)
+            # but using our English logging
+            parsed = urlparse(self.redis_url)
+            db = int(parsed.path.lstrip('/')) if parsed.path and parsed.path != '/' else 0
+            logger.info(f"[Storage] Redis: {parsed.hostname}:{parsed.port or 6379}/{db}")
 
-            # Create Redis connection
-            self._redis = redis.Redis(
-                host=parsed['host'], port=parsed['port'], password=parsed.get('password'),
-                username=parsed.get('username'), db=parsed.get('db', 0),
-                encoding="utf-8", decode_responses=True
+            self._redis = aioredis.Redis.from_url(
+                self.redis_url, encoding="utf-8", decode_responses=True
             )
 
-            # Test connection
             await self._redis.ping()
-            logger.info(f"[Storage] Redis connection successful: {parsed['host']}:{parsed['port']}/{parsed['db']}")
+            logger.info(f"[Storage] Redis connection successful")
 
-            # Initialize file storage and synchronize data
             await self._file.init_db()
             await self._sync_data()
 
@@ -358,26 +343,6 @@ class RedisStorage(BaseStorage):
         except Exception as e:
             logger.error(f"[Storage] Redis initialization failed: {e}")
             raise
-
-    def _parse_url(self, url: str) -> Dict[str, Any]:
-        """Parse Redis URL"""
-        if url.startswith('redis://'):
-            url = url[8:]
-        parsed = urlparse(f'//{url}')
-
-        result = {
-            'host': parsed.hostname or 'localhost',
-            'port': parsed.port or 6379,
-            'db': int(parsed.path.lstrip('/')) if parsed.path and parsed.path != '/' else 0,
-            'username': unquote(parsed.username) if parsed.username else None,
-            'password': unquote(parsed.password) if parsed.password else None
-        }
-
-        # Redis 6+ default username
-        if result['password'] and not result['username']:
-            result['username'] = 'default'
-
-        return result
 
     async def _sync_data(self) -> None:
         """Synchronize data"""
@@ -388,25 +353,24 @@ class RedisStorage(BaseStorage):
             ]:
                 data = await self._redis.get(key)
                 if data:
-                    parsed = json.loads(data)
+                    parsed = orjson.loads(data)
                     if key == "grok:tokens":
                         await self._file.save_tokens(parsed)
                     else:
                         await self._file.save_config(parsed)
-                    logger.info(f"[Storage] {key.split(':')[1]} data synchronized from Redis to file")
+                    logger.info(f"[Storage] {key.split(':')[1]} data synchronized from Redis")
                 else:
                     file_data = await file_func()
                     if file_data.get(key_name) or (key == "grok:tokens" and file_data.get("ssoSuper")):
-                        json_data = json.dumps(file_data, ensure_ascii=False)
-                        await self._redis.set(key, json_data)
-                        logger.info(f"[Storage] {key.split(':')[1]} data initialized from file to Redis")
+                        await self._redis.set(key, orjson.dumps(file_data).decode())
+                        logger.info(f"[Storage] {key.split(':')[1]} data initialized to Redis")
         except Exception as e:
-            logger.warning(f"[Storage] Data synchronization failed: {e}")
+            logger.warning(f"[Storage] Synchronization failed: {e}")
 
-    async def _save_redis(self, key: str, data: Dict[str, Any]) -> None:
+    async def _save_redis(self, key: str, data: Dict) -> None:
         """Save to Redis"""
         try:
-            await self._redis.set(key, json.dumps(data, ensure_ascii=False))
+            await self._redis.set(key, orjson.dumps(data).decode())
         except Exception as e:
             logger.error(f"[Storage] Failed to save to Redis: {e}")
             raise
@@ -437,7 +401,7 @@ class RedisStorage(BaseStorage):
 
 
 class StorageManager:
-    """Storage manager"""
+    """Storage manager (Singleton)"""
 
     _instance: Optional['StorageManager'] = None
     _storage: Optional[BaseStorage] = None
@@ -457,22 +421,17 @@ class StorageManager:
         url = os.getenv("DATABASE_URL", "")
         data_dir = Path(__file__).parents[2] / "data"
 
-        storage_classes = {
-            "mysql": MysqlStorage,
-            "redis": RedisStorage,
-            "file": FileStorage
-        }
+        classes = {"mysql": MysqlStorage, "redis": RedisStorage, "file": FileStorage}
 
         if mode in ("mysql", "redis") and not url:
             raise ValueError(f"{mode.upper()} mode requires DATABASE_URL environment variable")
 
-        storage_class = storage_classes.get(mode, FileStorage)
+        storage_class = classes.get(mode, FileStorage)
         self._storage = storage_class(url, data_dir) if mode != "file" else storage_class(data_dir)
 
         await self._storage.init_db()
         self._initialized = True
         logger.info(f"[Storage] Using {mode} storage mode")
-        logger.info("[Storage] Storage manager initialization completed")
 
     def get_storage(self) -> BaseStorage:
         """Get storage instance"""

@@ -4,6 +4,8 @@ from fastapi import HTTPException
 from typing import Optional, List, Union, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 
+from app.models.grok_models import Models
+
 
 class OpenAIChatRequest(BaseModel):
     """OpenAI Chat Request Model"""
@@ -54,16 +56,14 @@ class OpenAIChatRequest(BaseModel):
     @field_validator('model')
     def validate_model(cls, v):
         """Validate model name"""
-        allowed_models = [
-            'grok-3-fast', 'grok-4-fast', 'grok-4-fast-expert',
-            'grok-4-expert', 'grok-4-heavy', 'grok-imagine-0.9'
-        ]
-        if v not in allowed_models:
+        if not Models.is_valid_model(v):
+            supported = Models.get_all_model_names()
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported model '{v}', supported models: {', '.join(allowed_models)}"
+                detail=f"Unsupported model '{v}', supported models: {', '.join(supported)}"
             )
         return v
+
 
 class OpenAIChatCompletionMessage(BaseModel):
     """Chat completion message"""

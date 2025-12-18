@@ -1,6 +1,6 @@
-"""Post creation manager"""
+"""Post creation manager - for session creation before video generation"""
 
-import json
+import orjson
 from typing import Dict, Any, Optional
 from curl_cffi.requests import AsyncSession
 
@@ -9,18 +9,15 @@ from app.core.exception import GrokApiException
 from app.core.config import setting
 from app.core.logger import logger
 
-# Constant definitions
-CREATE_ENDPOINT = "https://grok.com/rest/media/post/create"
-REQUEST_TIMEOUT = 120
-IMPERSONATE_BROWSER = "chrome133a"
+
+# Constants
+ENDPOINT = "https://grok.com/rest/media/post/create"
+TIMEOUT = 30
+BROWSER = "chrome133a"
 
 
 class PostCreateManager:
-    """
-    Grok session creation manager
-
-    Provides image session creation functionality, for video generation preparation
-    """
+    """Grok session creation manager"""
 
     @staticmethod
     async def create(file_id: str, file_uri: str, auth_token: str) -> Optional[Dict[str, Any]]:
@@ -33,47 +30,41 @@ class PostCreateManager:
             auth_token: Authentication token
 
         Returns:
-            Created session information, including session ID, etc.
+            Created session information, including post_id, etc.
         """
+        if not file_id or not file_uri:
+            raise GrokApiException("File ID or URI missing", "INVALID_PARAMS")
+        
+        if not auth_token:
+            raise GrokApiException("Authentication token missing", "NO_AUTH_TOKEN")
+
         try:
-            # Validate parameters
-            if not file_id or not file_uri:
-                raise GrokApiException("Session ID or URI missing", "INVALID_PARAMS")
-
-            if not auth_token:
-                raise GrokApiException("Authentication token missing", "NO_AUTH_TOKEN")
-
-            # Build creation data
-            media_url = f"https://assets.grok.com/{file_uri}"
-
-            create_data = {
-                "media_url": media_url,
+            # Build request
+            data = {
+                "media_url": f"https://assets.grok.com/{file_uri}",
                 "media_type": "MEDIA_POST_TYPE_IMAGE"
             }
 
-            # Get authentication token and cookie
             cf_clearance = setting.grok_config.get("cf_clearance", "")
-            cookie = f"{auth_token};{cf_clearance}" if cf_clearance else auth_token
+            headers = {
+                **get_dynamic_headers("/rest/media/post/create"),
+                "Cookie": f"{auth_token};{cf_clearance}" if cf_clearance else auth_token
+            }
 
-            # Get proxy configuration
             proxy_url = setting.grok_config.get("proxy_url", "")
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
             # Send async request
             async with AsyncSession() as session:
                 response = await session.post(
-                    CREATE_ENDPOINT,
-                    headers={
-                        **get_dynamic_headers("/rest/media/post/create"),
-                        "Cookie": cookie,
-                    },
-                    json=create_data,
-                    impersonate=IMPERSONATE_BROWSER,
-                    timeout=REQUEST_TIMEOUT,
-                    proxies=proxies,
+                    ENDPOINT,
+                    headers=headers,
+                    json=data,
+                    impersonate=BROWSER,
+                    timeout=TIMEOUT,
+                    proxies=proxies
                 )
 
-                # Check response
                 if response.status_code == 200:
                     result = response.json()
                     post_id = result.get("post", {}).get("id", "")

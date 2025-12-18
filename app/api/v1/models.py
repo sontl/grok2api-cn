@@ -12,7 +12,6 @@ from app.models.grok_models import Models
 from app.core.auth import auth_manager
 from app.core.logger import logger
 
-# Configure logging
 
 # Create router
 router = APIRouter(tags=["models"])
@@ -21,16 +20,16 @@ router = APIRouter(tags=["models"])
 @router.get("/models")
 async def list_models(_: Optional[str] = Depends(auth_manager.verify)) -> Dict[str, Any]:
     """
-Retrieve available model list
+    Retrieve available model list
 
-Returns an OpenAI-compatible list of models, including detailed information for all Grok models supported by the system.
+    Returns an OpenAI-compatible list of models, including detailed information for all Grok models supported by the system.
 
-Args:
-    _: Authentication dependency (auto-validated)
+    Args:
+        _: Authentication dependency (auto-validated)
 
-Returns:
-    Dict[str, Any]: Response data containing the model list
-"""
+    Returns:
+        Dict[str, Any]: Response data containing the model list
+    """
     try:
         logger.debug("[Models] Requesting model list")
 
@@ -76,7 +75,7 @@ Returns:
             status_code=500,
             detail={
                 "error": {
-                    "message": f"Failed to retrieve models: {str(e)}",
+                    "message": f"Failed to retrieve models: {e}",
                     "type": "internal_error",
                     "code": "model_list_error"
                 }
@@ -87,15 +86,15 @@ Returns:
 @router.get("/models/{model_id}")
 async def get_model(model_id: str, _: Optional[str] = Depends(auth_manager.verify)) -> Dict[str, Any]:
     """
-Retrieve specific model information
+    Retrieve specific model information
 
-Args:
-    model_id (str): Model ID
-    _: Authentication dependency (auto-validated)
+    Args:
+        model_id (str): Model ID
+        _: Authentication dependency (auto-validated)
 
-Returns:
-    Dict[str, Any]: Detailed model information
-"""
+    Returns:
+        Dict[str, Any]: Detailed model information
+    """
     try:
         logger.debug(f"[Models] Requesting model info: {model_id}")
 
@@ -145,7 +144,7 @@ Returns:
             status_code=500,
             detail={
                 "error": {
-                    "message": f"Failed to retrieve model: {str(e)}",
+                    "message": f"Failed to retrieve model: {e}",
                     "type": "internal_error",
                     "code": "model_retrieve_error"
                 }

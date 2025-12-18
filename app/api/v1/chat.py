@@ -15,6 +15,7 @@ from app.core.logger import logger
 from app.services.grok.client import GrokClient
 from app.models.openai_schema import OpenAIChatRequest
 
+
 # Chat router
 router = APIRouter(prefix="/chat", tags=["chat"])
 

@@ -80,6 +80,32 @@ class TokenListResponse(BaseModel):
     total: int
 
 
+class UpdateSettingsRequest(BaseModel):
+    """Update configuration request"""
+    global_config: Optional[Dict[str, Any]] = None
+    grok_config: Optional[Dict[str, Any]] = None
+
+
+class UpdateTokenTagsRequest(BaseModel):
+    """Update token tags request"""
+    token: str
+    token_type: str
+    tags: List[str]
+
+
+class UpdateTokenNoteRequest(BaseModel):
+    """Update token note request"""
+    token: str
+    token_type: str
+    note: str
+
+
+class TestTokenRequest(BaseModel):
+    """Test token request"""
+    token: str
+    token_type: str
+
+
 # === Helper Functions ===
 
 def validate_token_type(token_type_str: str) -> TokenType:
@@ -113,7 +139,7 @@ def calculate_token_stats(tokens: Dict[str, Any], token_type: str) -> Dict[str, 
                      if t.get("status") != "expired" and t.get("remainingQueries", -1) == 0)
         active = sum(1 for t in tokens.values()
                     if t.get("status") != "expired" and t.get("remainingQueries", -1) > 0)
-    else:  # super token
+    else:
         unused = sum(1 for t in tokens.values()
                     if t.get("status") != "expired" and
                     t.get("remainingQueries", -1) == -1 and t.get("heavyremainingQueries", -1) == -1)
@@ -124,13 +150,7 @@ def calculate_token_stats(tokens: Dict[str, Any], token_type: str) -> Dict[str, 
                     if t.get("status") != "expired" and
                     (t.get("remainingQueries", -1) > 0 or t.get("heavyremainingQueries", -1) > 0))
 
-    return {
-        "total": total,
-        "unused": unused,
-        "limited": limited,
-        "expired": expired,
-        "active": active
-    }
+    return {"total": total, "unused": unused, "limited": limited, "expired": expired, "active": active}
 
 
 def verify_admin_session(authorization: Optional[str] = Header(None)) -> bool:
@@ -187,6 +207,28 @@ def get_token_status(token_data: Dict[str, Any], token_type: str) -> str:
         return "Active"
 
 
+def _calculate_dir_size(directory: Path) -> int:
+    """Calculate the size of all files in the directory (bytes)"""
+    total_size = 0
+    if directory.exists():
+        for file_path in directory.iterdir():
+            if file_path.is_file():
+                try:
+                    total_size += file_path.stat().st_size
+                except Exception as e:
+                    logger.warning(f"[Admin] Unable to get file size: {file_path.name}, Error: {str(e)}")
+    return total_size
+
+
+def _format_size(size_bytes: int) -> str:
+    """Format byte size to human-readable string"""
+    size_mb = size_bytes / BYTES_PER_MB
+    if size_mb < 1:
+        size_kb = size_bytes / BYTES_PER_KB
+        return f"{size_kb:.1f} KB"
+    return f"{size_mb:.1f} MB"
+
+
 # === Page Routes ===
 
 @router.get("/login", response_class=HTMLResponse)
@@ -232,7 +274,7 @@ async def admin_login(request: LoginRequest) -> LoginResponse:
 
         # Generate session token
         session_token = secrets.token_urlsafe(32)
-
+        
         # Set session expiration time
         expire_time = datetime.now() + timedelta(hours=SESSION_EXPIRE_HOURS)
         _sessions[session_token] = expire_time
@@ -290,11 +332,11 @@ async def list_tokens(_: bool = Depends(verify_admin_session)) -> TokenListRespo
     try:
         logger.debug("[Admin] Starting to retrieve token list")
 
-        all_tokens_data = token_manager.get_tokens()
+        all_tokens = token_manager.get_tokens()
         token_list: List[TokenInfo] = []
 
         # Process normal tokens
-        normal_tokens = all_tokens_data.get(TokenType.NORMAL.value, {})
+        normal_tokens = all_tokens.get(TokenType.NORMAL.value, {})
         for token, data in normal_tokens.items():
             token_list.append(TokenInfo(
                 token=token,
@@ -303,12 +345,12 @@ async def list_tokens(_: bool = Depends(verify_admin_session)) -> TokenListRespo
                 remaining_queries=data.get("remainingQueries", -1),
                 heavy_remaining_queries=data.get("heavyremainingQueries", -1),
                 status=get_token_status(data, "sso"),
-                tags=data.get("tags", []),  # Backward compatibility, return empty list if no tags field
-                note=data.get("note", "")  # Backward compatibility, return empty string if no note field
+                tags=data.get("tags", []),
+                note=data.get("note", "")
             ))
 
         # Process Super Token
-        super_tokens = all_tokens_data.get(TokenType.SUPER.value, {})
+        super_tokens = all_tokens.get(TokenType.SUPER.value, {})
         for token, data in super_tokens.items():
             token_list.append(TokenInfo(
                 token=token,
@@ -317,8 +359,8 @@ async def list_tokens(_: bool = Depends(verify_admin_session)) -> TokenListRespo
                 remaining_queries=data.get("remainingQueries", -1),
                 heavy_remaining_queries=data.get("heavyremainingQueries", -1),
                 status=get_token_status(data, "ssoSuper"),
-                tags=data.get("tags", []),  # Backward compatibility, return empty list if no tags field
-                note=data.get("note", "")  # Backward compatibility, return empty string if no note field
+                tags=data.get("tags", []),
+                note=data.get("note", "")
             ))
 
         normal_count = len(normal_tokens)
@@ -428,19 +470,6 @@ async def get_settings(_: bool = Depends(verify_admin_session)) -> Dict[str, Any
         raise HTTPException(status_code=500, detail={"error": f"Failed to get configuration: {str(e)}", "code": "GET_SETTINGS_ERROR"})
 
 
-class UpdateSettingsRequest(BaseModel):
-    """Update configuration request"""
-    global_config: Optional[Dict[str, Any]] = None
-    grok_config: Optional[Dict[str, Any]] = None
-
-
-class StreamTimeoutSettings(BaseModel):
-    """Streaming timeout configuration"""
-    stream_chunk_timeout: int = 120
-    stream_first_response_timeout: int = 30
-    stream_total_timeout: int = 600
-
-
 @router.post("/api/settings")
 async def update_settings(request: UpdateSettingsRequest, _: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
     """Update global configuration"""
@@ -460,27 +489,6 @@ async def update_settings(request: UpdateSettingsRequest, _: bool = Depends(veri
         raise HTTPException(status_code=500, detail={"error": f"Failed to update configuration: {str(e)}", "code": "UPDATE_SETTINGS_ERROR"})
 
 
-def _calculate_dir_size(directory: Path) -> int:
-    """Calculate the size of all files in the directory (bytes)"""
-    total_size = 0
-    for file_path in directory.iterdir():
-        if file_path.is_file():
-            try:
-                total_size += file_path.stat().st_size
-            except Exception as e:
-                logger.warning(f"[Admin] Unable to get file size: {file_path.name}, Error: {str(e)}")
-    return total_size
-
-
-def _format_size(size_bytes: int) -> str:
-    """Format byte size to human-readable string"""
-    size_mb = size_bytes / BYTES_PER_MB
-    if size_mb < 1:
-        size_kb = size_bytes / BYTES_PER_KB
-        return f"{size_kb:.1f} KB"
-    return f"{size_mb:.1f} MB"
-
-
 @router.get("/api/cache/size")
 async def get_cache_size(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
     """Get cache size"""
@@ -488,14 +496,10 @@ async def get_cache_size(_: bool = Depends(verify_admin_session)) -> Dict[str, A
         logger.debug("[Admin] Starting to get cache size")
 
         # Calculate image cache size
-        image_size = 0
-        if IMAGE_CACHE_DIR.exists():
-            image_size = _calculate_dir_size(IMAGE_CACHE_DIR)
+        image_size = _calculate_dir_size(IMAGE_CACHE_DIR)
 
         # Calculate video cache size
-        video_size = 0
-        if VIDEO_CACHE_DIR.exists():
-            video_size = _calculate_dir_size(VIDEO_CACHE_DIR)
+        video_size = _calculate_dir_size(VIDEO_CACHE_DIR)
 
         # Total size
         total_size = image_size + video_size
@@ -524,13 +528,10 @@ async def get_cache_size(_: bool = Depends(verify_admin_session)) -> Dict[str, A
 
 @router.post("/api/cache/clear")
 async def clear_cache(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
-    """Clear cache
-
-    Delete all temporary files"""
+    """Clear cache - Delete all temporary files"""
     try:
         logger.debug("[Admin] Starting cache clearing")
 
-        deleted_count = 0
         image_count = 0
         video_count = 0
 
@@ -579,9 +580,7 @@ async def clear_cache(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]
 
 @router.post("/api/cache/clear/images")
 async def clear_image_cache(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
-    """Clear image cache
-
-    Delete image cache files only"""
+    """Clear image cache - Delete image cache files only"""
     try:
         logger.debug("[Admin] Starting image cache clearing")
 
@@ -619,9 +618,7 @@ async def clear_image_cache(_: bool = Depends(verify_admin_session)) -> Dict[str
 
 @router.post("/api/cache/clear/videos")
 async def clear_video_cache(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
-    """Clear video cache
-
-    Delete video cache files only"""
+    """Clear video cache - Delete video cache files only"""
     try:
         logger.debug("[Admin] Starting video cache clearing")
 
@@ -667,14 +664,13 @@ async def get_stats(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
     try:
         logger.debug("[Admin] Starting to get statistics")
 
-        all_tokens_data = token_manager.get_tokens()
-
+        all_tokens = token_manager.get_tokens()
         # Statistics for normal tokens
-        normal_tokens = all_tokens_data.get(TokenType.NORMAL.value, {})
+        normal_tokens = all_tokens.get(TokenType.NORMAL.value, {})
         normal_stats = calculate_token_stats(normal_tokens, "normal")
 
         # Statistics for Super Token
-        super_tokens = all_tokens_data.get(TokenType.SUPER.value, {})
+        super_tokens = all_tokens.get(TokenType.SUPER.value, {})
         super_stats = calculate_token_stats(super_tokens, "super")
 
         total_count = normal_stats["total"] + super_stats["total"]
@@ -708,30 +704,15 @@ async def get_storage_mode(_: bool = Depends(verify_admin_session)) -> Dict[str,
     """
     try:
         logger.debug("[Admin] Getting storage mode")
-
         import os
-        storage_mode = os.getenv("STORAGE_MODE", "file").upper()
-
-        return {
-            "success": True,
-            "data": {
-                "mode": storage_mode
-            }
-        }
-
+        mode = os.getenv("STORAGE_MODE", "file").upper()
+        return {"success": True, "data": {"mode": mode}}
     except Exception as e:
         logger.error(f"[Admin] Storage mode retrieval exception - Error: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail={"error": f"Failed to get storage mode: {str(e)}", "code": "STORAGE_MODE_ERROR"}
         )
-
-
-class UpdateTokenTagsRequest(BaseModel):
-    """Update token tags request"""
-    token: str
-    token_type: str
-    tags: List[str]
 
 
 @router.post("/api/tokens/tags")
@@ -781,11 +762,11 @@ async def get_all_tags(_: bool = Depends(verify_admin_session)) -> Dict[str, Any
     try:
         logger.debug("[Admin] Getting all tags")
 
-        all_tokens_data = token_manager.get_tokens()
+        all_tokens = token_manager.get_tokens()
         tags_set = set()
 
         # Collect all tags
-        for token_type_data in all_tokens_data.values():
+        for token_type_data in all_tokens.values():
             for token_data in token_type_data.values():
                 tags = token_data.get("tags", [])
                 if isinstance(tags, list):
@@ -805,13 +786,6 @@ async def get_all_tags(_: bool = Depends(verify_admin_session)) -> Dict[str, Any
             status_code=500,
             detail={"error": f"Failed to get tags: {str(e)}", "code": "GET_TAGS_ERROR"}
         )
-
-
-class UpdateTokenNoteRequest(BaseModel):
-    """Update token note request"""
-    token: str
-    token_type: str
-    note: str
 
 
 @router.post("/api/tokens/note")
@@ -849,12 +823,6 @@ async def update_token_note(
             status_code=500,
             detail={"error": f"Failed to update note: {str(e)}", "code": "UPDATE_NOTE_ERROR"}
         )
-
-
-class TestTokenRequest(BaseModel):
-    """Test token request"""
-    token: str
-    token_type: str
 
 
 @router.post("/api/tokens/test")
@@ -901,6 +869,7 @@ async def test_token(
 
             # Check current token status
             all_tokens = token_manager.get_tokens()
+            # Fetch using the enum value to be safe
             token_data = all_tokens.get(token_type.value, {}).get(request.token)
 
             if token_data:

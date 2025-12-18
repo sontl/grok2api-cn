@@ -4,22 +4,27 @@ import sys
 import logging
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
+
 from app.core.config import setting
+
+
+# Filter patterns
+FILTER_PATTERNS = [
+    "chunk: b'",  # SSE raw bytes
+    "Got event:",  # SSE events
+    "Closing",  # SSE closing
+]
 
 
 class MCPLogFilter(logging.Filter):
     """MCP log filter - Filters out DEBUG logs that contain large amounts of data"""
 
-    def filter(self, record):
-        # Filter out SSE logs that contain raw byte data
-        if record.name == "sse_starlette.sse" and "chunk: b'" in record.getMessage():
-            return False
-
-        # Filter out some redundant SSE logs
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Filter logs"""
+        # Filter out SSE DEBUG logs
         if record.name == "sse_starlette.sse" and record.levelno == logging.DEBUG:
             msg = record.getMessage()
-            if any(x in msg for x in ["Got event:", "Closing", "chunk:"]):
-                return False
+            return not any(p in msg for p in FILTER_PATTERNS)
 
         # Filter out some DEBUG logs from MCP streamable_http
         if "mcp.server.streamable_http" in record.name and record.levelno == logging.DEBUG:
@@ -29,12 +34,18 @@ class MCPLogFilter(logging.Filter):
 
 
 class LoggerManager:
-    """Logger manager"""
+    """Logger manager (Singleton)"""
 
+    _instance = None
     _initialized = False
 
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        """Initialize logging"""
+        """Initialize logging system"""
         if LoggerManager._initialized:
             return
 
@@ -65,9 +76,9 @@ class LoggerManager:
         console_handler.setFormatter(formatter)
         console_handler.addFilter(mcp_filter)
 
-        # File handler
+        # File handler (10MB, 5 backups)
         file_handler = RotatingFileHandler(
-            log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+            log_file, maxBytes=10*1024*1024, backupCount=5, encoding="utf-8"
         )
         file_handler.setLevel(log_level)
         file_handler.setFormatter(formatter)
@@ -77,17 +88,24 @@ class LoggerManager:
         self.logger.addHandler(console_handler)
         self.logger.addHandler(file_handler)
 
-        # Configure third-party library log levels to avoid excessive debug information
-        logging.getLogger("asyncio").setLevel(logging.WARNING)
-        logging.getLogger("uvicorn").setLevel(logging.INFO)
-        logging.getLogger("fastapi").setLevel(logging.INFO)
-        logging.getLogger("aiomysql").setLevel(logging.WARNING)
-
-        # FastMCP related logs - Turn off
-        logging.getLogger("mcp").setLevel(logging.CRITICAL)
-        logging.getLogger("fastmcp").setLevel(logging.CRITICAL)
+        # Configure third-party library log levels
+        self._configure_third_party()
 
         LoggerManager._initialized = True
+    
+    def _configure_third_party(self):
+        """Configure third-party library log levels"""
+        config = {
+            "asyncio": logging.WARNING,
+            "uvicorn": logging.INFO,
+            "fastapi": logging.INFO,
+            "aiomysql": logging.WARNING,
+            "mcp": logging.CRITICAL,
+            "fastmcp": logging.CRITICAL,
+        }
+        
+        for name, level in config.items():
+            logging.getLogger(name).setLevel(level)
 
     def debug(self, msg: str) -> None:
         """Debug log"""

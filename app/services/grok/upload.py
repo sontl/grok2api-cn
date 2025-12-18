@@ -5,13 +5,13 @@ import re
 import asyncio
 from typing import Tuple, Optional
 from urllib.parse import urlparse
-
 from curl_cffi.requests import AsyncSession
 
 from app.services.grok.statsig import get_dynamic_headers
 from app.core.exception import GrokApiException
 from app.core.config import setting
 from app.core.logger import logger
+
 
 # Constant definitions
 UPLOAD_ENDPOINT = "https://grok.com/rest/app-chat/upload-file"
@@ -32,7 +32,7 @@ class ImageUploadManager:
     """
 
     @staticmethod
-    async def upload(image_input: str, auth_token: str) -> str:
+    async def upload(image_input: str, auth_token: str) -> Tuple[str, str]:
         """Upload image to Grok, supporting Base64 or URL"""
         if ImageUploadManager._is_url(image_input):
             # Download URL image
@@ -88,8 +88,6 @@ class ImageUploadManager:
                     # Check response
                     if response.status_code == 200:
                         result = response.json()
-                        # print the result
-                        print(result)
                         file_id = result.get("fileMetadataId", "")
                         file_uri = result.get("fileUri", "")
                         logger.debug(f"[Upload] Image upload successful, file ID: {file_id}")
@@ -100,7 +98,7 @@ class ImageUploadManager:
             except Exception as e:
                 logger.warning(f"[Upload] Upload attempt {attempt + 1}/{max_retries} failed with error: {e}")
             
-            # Wait before retrying, but not after the last attempt
+            # Wait before retrying
             if attempt < max_retries - 1:
                 await asyncio.sleep(retry_delay)
 
@@ -149,11 +147,9 @@ class ImageUploadManager:
     @staticmethod
     def _get_info(image_data: str, mime_type: Optional[str] = None) -> Tuple[str, str]:
         """Get image filename and MIME type"""
-        # mime_type has value, use directly
         if mime_type:
-            extension = mime_type.split("/")[1] if "/" in mime_type else DEFAULT_EXTENSION
-            file_name = f"image.{extension}"
-            return file_name, mime_type
+            ext = mime_type.split("/")[1] if "/" in mime_type else DEFAULT_EXTENSION
+            return f"image.{ext}", mime_type
 
         # mime_type has no value, use default
         mime_type = DEFAULT_MIME_TYPE
@@ -161,10 +157,8 @@ class ImageUploadManager:
 
         # Extract MIME type from Base64 data
         if "data:image" in image_data:
-            match = re.search(r"data:([a-zA-Z0-9]+/[a-zA-Z0-9-.+]+);base64,", image_data)
-            if match:
+            if match := re.search(r"data:([a-zA-Z0-9]+/[a-zA-Z0-9-.+]+);base64,", image_data):
                 mime_type = match.group(1)
                 extension = mime_type.split("/")[1]
 
-        file_name = f"image.{extension}"
-        return file_name, mime_type
+        return f"image.{extension}", mime_type
