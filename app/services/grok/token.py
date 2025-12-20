@@ -288,7 +288,7 @@ class GrokTokenManager:
     def select_token(self, model: str, exclude_tokens: list[str] = None) -> str:
         self._reload_if_needed()
         exclude_tokens = exclude_tokens or []
-        
+        print (exclude_tokens)
         def select_best_token(tokens_dict: Dict[str, Any], field: str) -> Tuple[Optional[str], Optional[int]]:
             unused_tokens = []
             used_tokens = []
@@ -304,7 +304,8 @@ class GrokTokenManager:
                         break
                 if is_excluded:
                     continue
-                
+                print (token_key)
+                print (token_data)
                 if token_data.get("status") == "expired":
                     continue
                 if token_data.get("failedCount", 0) >= MAX_FAILURE_COUNT:
@@ -350,12 +351,23 @@ class GrokTokenManager:
                 max_token_key, max_remaining = select_best_token(token_data_snapshot[TokenType.SUPER.value], remaining_field)
         
         if max_token_key is None:
-             excluded_info = f" (excluding {len(exclude_tokens)} tried tokens)" if exclude_tokens else ""
-             raise GrokApiException(
+            # No available token - reset all tokens and retry from oldest
+            logger.warning(f"[Token] No available token for {model}, resetting all tokens and retrying...")
+            self.reset_all_tokens()
+            
+            # Select oldest failed token for retry
+            oldest_token = self._select_oldest_failed_token(model)
+            if oldest_token:
+                logger.info(f"[Token] Retrying with oldest token: {oldest_token[:10]}...")
+                return oldest_token
+            
+            # Still no token available after reset
+            excluded_info = f" (excluding {len(exclude_tokens)} tried tokens)" if exclude_tokens else ""
+            raise GrokApiException(
                 f"No available Token for model {model}{excluded_info}",
                 "NO_AVAILABLE_TOKEN",
                 {"model": model}
-             )
+            )
         
         status_text = "Unused" if max_remaining == -1 else f"{max_remaining} remaining"
         logger.debug(f"[Token] Allocating Token for model {model} ({status_text})")
@@ -474,6 +486,55 @@ class GrokTokenManager:
                 logger.info(f"[Token] Reset failure count: {sso_value[:10]}...")
         except Exception as e:
             logger.error(f"[Token] Reset failure error: {str(e)}")
+
+    def reset_all_tokens(self) -> None:
+        """Reset all tokens: priority=0, failedCount=0, lastFailureReason=None, status=active"""
+        try:
+            reset_count = 0
+            for token_type in [TokenType.NORMAL.value, TokenType.SUPER.value]:
+                if token_type not in self.token_data:
+                    continue
+                for token_key, token_data in self.token_data[token_type].items():
+                    token_data["priority"] = 0
+                    token_data["failedCount"] = 0
+                    token_data["lastFailureReason"] = None
+                    if token_data.get("status") == "expired":
+                        token_data["status"] = "active"
+                    reset_count += 1
+            
+            self._mark_dirty()
+            logger.info(f"[Token] Reset all {reset_count} tokens (priority, failedCount, status)")
+        except Exception as e:
+            logger.error(f"[Token] Reset all tokens error: {str(e)}")
+
+    def _select_oldest_failed_token(self, model: str) -> Optional[str]:
+        """Select token with oldest lastFailureTime for retry"""
+        oldest_token = None
+        oldest_time = float('inf')
+        
+        # Determine which token types to check based on model
+        if model == "grok-4-heavy":
+            types_to_check = [TokenType.SUPER.value]
+        else:
+            types_to_check = [TokenType.NORMAL.value, TokenType.SUPER.value]
+        
+        for token_type in types_to_check:
+            if token_type not in self.token_data:
+                continue
+            for token_key, token_data in self.token_data[token_type].items():
+                failure_time = token_data.get("lastFailureTime")
+                if failure_time is not None and failure_time < oldest_time:
+                    oldest_time = failure_time
+                    oldest_token = token_key
+        
+        # If no token has failure time, just pick the first one
+        if oldest_token is None:
+            for token_type in types_to_check:
+                if token_type in self.token_data and self.token_data[token_type]:
+                    oldest_token = next(iter(self.token_data[token_type].keys()))
+                    break
+        
+        return oldest_token
 
     async def mark_token_priority(self, auth_token: str) -> None:
         try:
