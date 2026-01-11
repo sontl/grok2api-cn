@@ -1,7 +1,12 @@
 """FastAPI Application Main Entry Point"""
 
+import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.logger import logger
 from app.core.exception import register_exception_handlers
@@ -12,12 +17,20 @@ from app.api.v1.chat import router as chat_router
 from app.api.v1.models import router as models_router
 from app.api.v1.images import router as images_router
 from app.api.admin.manage import router as admin_router
-
-# Import MCP server (authentication configuration is completed in server.py)
 from app.services.mcp import mcp
 
-# Create MCP's FastAPI application instance
-# Using streaming HTTP transport, supporting efficient bidirectional streaming communication
+# 0. Compatibility detection
+try:
+    if sys.platform != 'win32':
+        import uvloop
+        uvloop.install()
+        logger.info("[Grok2API] Enabled uvloop high-performance event loop")
+    else:
+        logger.info("[Grok2API] Windows system, using default asyncio event loop")
+except ImportError:
+    logger.info("[Grok2API] uvloop not installed, using default asyncio event loop")
+
+# 1. Create MCP FastAPI application instance
 mcp_app = mcp.http_app(stateless_http=True, transport="streamable-http")
 
 # 2. Define application lifecycle
@@ -47,7 +60,14 @@ async def lifespan(app: FastAPI):
     # 2. Reload config
     await setting.reload()
     logger.info("[Grok2API] Core services initialization completed")
-
+    
+    # 2.5. Initialize proxy pool
+    from app.core.proxy_pool import proxy_pool
+    proxy_url = setting.grok_config.get("proxy_url", "")
+    proxy_pool_url = setting.grok_config.get("proxy_pool_url", "")
+    proxy_pool_interval = setting.grok_config.get("proxy_pool_interval", 300)
+    proxy_pool.configure(proxy_url, proxy_pool_url, proxy_pool_interval)
+    
     # 3. Asynchronously load token data
     await token_manager._load_data()
     logger.info("[Grok2API] Token data loading completed")
@@ -136,10 +156,19 @@ if __name__ == "__main__":
             f"Recommended to use Redis/MySQL storage for best performance."
         )
     
+    # Determine event loop type
+    loop_type = "auto"
+    if workers == 1 and sys.platform != 'win32':
+        try:
+            import uvloop
+            loop_type = "uvloop"
+        except ImportError:
+            pass
+    
     uvicorn.run(
         "main:app",  # Use string to support multi-worker
         host="0.0.0.0",
         port=8001,
         workers=workers,
-        loop="uvloop" if workers == 1 else "auto"  # Use uvloop for single process, auto for multi-process
+        loop=loop_type
     )

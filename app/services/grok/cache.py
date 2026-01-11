@@ -60,37 +60,83 @@ class CacheService:
             self._log("debug", "File already cached")
             return cache_path
 
-        try:
-            proxy = setting.get_proxy("cache") # Using unified get_proxy for cache
-            proxies = {"http": proxy, "https": proxy} if proxy else {}
-            
-            if proxy:
-                self._log("debug", f"Using proxy: {proxy.split('@')[-1] if '@' in proxy else proxy}")
+        # Outer retry: configurable status codes (401/429 etc.)
+        retry_codes = setting.grok_config.get("retry_status_codes", [401, 429])
+        MAX_OUTER_RETRY = 3
+        
+        for outer_retry in range(MAX_OUTER_RETRY + 1):  # +1 to ensure 3 actual retries
+            try:
+                # Inner retry: 403 proxy pool retry (cache uses cache proxy, doesn't support proxy pool, so 403 only retries once)
+                max_403_retries = 5
+                retry_403_count = 0
+                
+                while retry_403_count <= max_403_retries:
+                    proxy = await setting.get_proxy_async("cache")
+                    proxies = {"http": proxy, "https": proxy} if proxy else {}
+                    
+                    if proxy and outer_retry == 0 and retry_403_count == 0:
+                        self._log("debug", f"Using proxy: {proxy.split('@')[-1] if '@' in proxy else proxy}")
 
-            async with AsyncSession() as session:
-                url = f"{ASSETS_URL}{file_path}"
-                self._log("debug", f"Downloading: {url}")
+                    async with AsyncSession() as session:
+                        url = f"{ASSETS_URL}{file_path}"
+                        if outer_retry == 0 and retry_403_count == 0:
+                            self._log("debug", f"Downloading: {url}")
+                        
+                        response = await session.get(
+                            url,
+                            headers=self._build_headers(file_path, auth_token),
+                            proxies=proxies,
+                            timeout=timeout or self.timeout,
+                            allow_redirects=True,
+                            impersonate="chrome133a"
+                        )
+                        
+                        # Check 403 error - inner retry (cache doesn't use proxy pool, so fail directly)
+                        if response.status_code == 403:
+                            retry_403_count += 1
+                            
+                            if retry_403_count <= max_403_retries:
+                                self._log("warning", f"Encountered 403 error, retrying ({retry_403_count}/{max_403_retries})...")
+                                await asyncio.sleep(0.5)
+                                continue
+                            
+                            self._log("error", f"403 error, retried {retry_403_count-1} times, giving up")
+                            return None
+                        
+                        # Check configurable status code errors - outer retry
+                        if response.status_code in retry_codes:
+                            if outer_retry < MAX_OUTER_RETRY:
+                                delay = (outer_retry + 1) * 0.1  # Progressive delay: 0.1s, 0.2s, 0.3s
+                                self._log("warning", f"Encountered {response.status_code} error, outer retry ({outer_retry+1}/{MAX_OUTER_RETRY}), waiting {delay}s...")
+                                await asyncio.sleep(delay)
+                                break  # Break out of inner loop, enter outer retry
+                            else:
+                                self._log("error", f"{response.status_code} error, retried {outer_retry} times, giving up")
+                                return None
+                        
+                        response.raise_for_status()
+                        
+                        cache_path.write_bytes(response.content)
+                        
+                        if outer_retry > 0 or retry_403_count > 0:
+                            self._log("info", f"Retry successful!")
+                        else:
+                            self._log("debug", "Cached successfully")
+                        
+                        # Async cleanup (with error handling)
+                        asyncio.create_task(self._safe_cleanup())
+                        return cache_path
+                        
+            except Exception as e:
+                if outer_retry < MAX_OUTER_RETRY - 1:
+                    self._log("warning", f"Download exception: {e}, outer retry ({outer_retry+1}/{MAX_OUTER_RETRY})...")
+                    await asyncio.sleep(0.5)
+                    continue
                 
-                response = await session.get(
-                    url,
-                    headers=self._build_headers(file_path, auth_token),
-                    proxies=proxies,
-                    timeout=timeout or self.timeout,
-                    allow_redirects=True,
-                    impersonate="chrome133a"
-                )
-                response.raise_for_status()
-                
-                cache_path.write_bytes(response.content)
-                self._log("debug", "Cached successfully")
-                
-                # Async cleanup (safe)
-                asyncio.create_task(self._safe_cleanup())
-                return cache_path
-                
-        except Exception as e:
-            self._log("error", f"Download failed: {e}")
-            return None
+                self._log("error", f"Download failed: {e} (retried {outer_retry} times)")
+                return None
+        
+        return None
 
     def get_cached(self, file_path: str) -> Optional[Path]:
         """Get cached file path"""

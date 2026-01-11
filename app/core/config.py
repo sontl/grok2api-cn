@@ -9,16 +9,21 @@ import aiofiles
 DEFAULT_GROK = {
     "api_key": "",
     "proxy_url": "",
+    "proxy_pool_url": "",
+    "proxy_pool_interval": 300,
     "cache_proxy_url": "",
     "cf_clearance": "",
     "x_statsig_id": "",
     "dynamic_statsig": True,
-    "filtered_tags": "xaiartifact,xai:tool_usage_card,grok:render",
+    "filtered_tags": "xaiartifact,xai:tool_usage_card",
+    "show_thinking": True,
+    "temporary": False,
+    "max_upload_concurrency": 20,
+    "max_request_concurrency": 100,
+    "stream_first_response_timeout": 30,
     "stream_chunk_timeout": 120,
     "stream_total_timeout": 600,
-    "stream_first_response_timeout": 30,
-    "temporary": True,
-    "show_thinking": True
+    "retry_status_codes": [401, 429],  # Retryable HTTP status codes
 }
 
 DEFAULT_GLOBAL = {
@@ -60,8 +65,16 @@ class ConfigManager:
             toml.dump(default, f)
     
     def _normalize_proxy(self, proxy: str) -> str:
-        """Normalize proxy URL (socks5:// -> socks5h://)"""
-        if proxy and proxy.startswith("socks5://"):
+        """Normalize proxy URL (sock5/socks5 → socks5h://)"""
+        if not proxy:
+            return proxy
+
+        proxy = proxy.strip()
+        if proxy.startswith("sock5h://"):
+            proxy = proxy.replace("sock5h://", "socks5h://", 1)
+        if proxy.startswith("sock5://"):
+            proxy = proxy.replace("sock5://", "socks5://", 1)
+        if proxy.startswith("socks5://"):
             return proxy.replace("socks5://", "socks5h://", 1)
         return proxy
     
@@ -85,6 +98,8 @@ class ConfigManager:
             if section == "grok":
                 if "proxy_url" in config:
                     config["proxy_url"] = self._normalize_proxy(config["proxy_url"])
+                if "cache_proxy_url" in config:
+                    config["cache_proxy_url"] = self._normalize_proxy(config["cache_proxy_url"])
                 if "cf_clearance" in config:
                     config["cf_clearance"] = self._normalize_cf(config["cf_clearance"])
 
@@ -146,20 +161,41 @@ class ConfigManager:
         
         await self.reload()
     
-    def get_proxy(self, proxy_type: Literal["service", "cache"] = "service") -> str:
-        """Get proxy URL
+    async def get_proxy_async(self, proxy_type: Literal["service", "cache"] = "service") -> str:
+        """Async get proxy URL (supports proxy pool)
         
         Args:
             proxy_type: Proxy type
                 - service: Service proxy (client/upload)
                 - cache: Cache proxy (cache)
         """
+        from app.core.proxy_pool import proxy_pool
+        
         if proxy_type == "cache":
             cache_proxy = self.grok_config.get("cache_proxy_url", "")
             if cache_proxy:
                 return cache_proxy
         
-        return self.grok_config.get("proxy_url", "")
+        # Get from proxy pool
+        return await proxy_pool.get_proxy() or ""
+    
+    def get_proxy(self, proxy_type: Literal["service", "cache"] = "service") -> str:
+        """Get proxy URL (synchronous method, for backward compatibility)
+        
+        Args:
+            proxy_type: Proxy type
+                - service: Service proxy (client/upload)
+                - cache: Cache proxy (cache)
+        """
+        from app.core.proxy_pool import proxy_pool
+        
+        if proxy_type == "cache":
+            cache_proxy = self.grok_config.get("cache_proxy_url", "")
+            if cache_proxy:
+                return cache_proxy
+        
+        # Return current proxy (if using proxy pool, return the last fetched one)
+        return proxy_pool.get_current_proxy() or self.grok_config.get("proxy_url", "")
 
     def get_service_proxy(self) -> str:
         """Get service proxy URL (backward compatibility)"""

@@ -130,36 +130,14 @@ class GrokClient:
 
             except GrokApiException as e:
                 last_err = e
-                
-                # Check if it's a retryable error
+                # Check if it's retryable
                 if e.error_code not in ["HTTP_ERROR", "NO_AVAILABLE_TOKEN"]:
                     raise
 
-                # Check if it's a retryable status code
-                status = e.details.get("status") if e.details else None
+                status = e.context.get("status") if e.context else None
+                retry_codes = setting.grok_config.get("retry_status_codes", [401, 429])
                 
-                # For 429 errors, try next token
-                if status == 429:
-                    if i < max_attempts - 1:
-                        logger.warning(f"[Client] Token rate limited (429), trying next token (attempt {i+1}/{max_attempts})")
-                        await asyncio.sleep(0.5)  # Brief delay
-                        continue
-                    else:
-                        logger.error(f"[Client] All tokens rate limited after {max_attempts} attempts")
-                        break
-                
-                # For 401 errors, try next token
-                elif status == 401:
-                    if i < max_attempts - 1:
-                        logger.warning(f"[Client] Token authentication failed (401), trying next token (attempt {i+1}/{max_attempts})")
-                        await asyncio.sleep(0.5)
-                        continue
-                    else:
-                        logger.error(f"[Client] All tokens failed authentication after {max_attempts} attempts")
-                        break
-                
-                # Other errors are not retryable
-                else:
+                if status not in retry_codes:
                     raise
 
         raise last_err if last_err else GrokApiException("Request failed after trying all available tokens", "REQUEST_ERROR")
@@ -272,57 +250,102 @@ class GrokClient:
         if not auth_token:
             raise GrokApiException("Authentication token missing", "NO_AUTH_TOKEN")
 
-        try:
-            # Build request headers
-            headers = GrokClient._build_headers(auth_token)
-            if model == "grok-imagine-0.9":
-                # Pass in session ID
-                file_attachments = payload.get("fileAttachments", [])
-                referer_id = post_id if post_id else (file_attachments[0] if file_attachments else "")
-                if referer_id:
-                    headers["Referer"] = f"https://grok.com/imagine/{referer_id}"
-
-            # Use service proxy
-            proxy_url = setting.get_service_proxy()
-            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-
-            # Execute synchronous HTTP request in thread pool to avoid blocking event loop
-            response = await asyncio.to_thread(
-                curl_requests.post,
-                API_ENDPOINT,
-                headers=headers,
-                data=orjson.dumps(payload),
-                impersonate=IMPERSONATE_BROWSER,
-                timeout=REQUEST_TIMEOUT,
-                stream=True,
-                proxies=proxies
-            )
-
-            # Handle non-success response
-            if response.status_code != 200:
-                GrokClient._handle_error(response, auth_token)
-
-            # Request successful, reset failure count
-            asyncio.create_task(token_manager.reset_failure(auth_token))
-
-            # Process and return response
-            return await GrokClient._process_response(response, auth_token, model, stream, auto_upscale)
-
-        except curl_requests.RequestsError as e:
-            logger.error(f"[Client] Network request error: {e}")
-            raise GrokApiException(f"Network error: {e}", "NETWORK_ERROR") from e
-        except json.JSONDecodeError as e:
-            logger.error(f"[Client] JSON parsing error: {e}")
-            raise GrokApiException(f"JSON parsing error: {e}", "JSON_ERROR") from e
-        except GrokApiException:
-            raise
-        except Exception as e:
-            # Handle potential class mismatch for GrokApiException
-            if type(e).__name__ == 'GrokApiException':
-                raise
-
-            logger.error(f"[Client] Unknown request error: {type(e).__name__}: {e}")
-            raise GrokApiException(f"Request processing error: {e}", "REQUEST_ERROR") from e
+        # Outer retry: configurable status codes (401/429 etc.)
+        retry_codes = setting.grok_config.get("retry_status_codes", [401, 429])
+        MAX_OUTER_RETRY = 3
+        
+        for outer_retry in range(MAX_OUTER_RETRY + 1):  # +1 to ensure 3 actual retries
+            # Inner retry: 403 proxy pool retry
+            max_403_retries = 5
+            retry_403_count = 0
+            
+            while retry_403_count <= max_403_retries:
+                try:
+                    # Build request
+                    headers = GrokClient._build_headers(auth_token)
+                    if model == "grok-imagine-0.9":
+                        file_attachments = payload.get("fileAttachments", [])
+                        ref_id = post_id or (file_attachments[0] if file_attachments else "")
+                        if ref_id:
+                            headers["Referer"] = f"https://grok.com/imagine/{ref_id}"
+                    
+                    # Async get proxy
+                    from app.core.proxy_pool import proxy_pool
+                    
+                    # If 403 retry and using proxy pool, force refresh proxy
+                    if retry_403_count > 0 and proxy_pool._enabled:
+                        logger.info(f"[Client] 403 retry {retry_403_count}/{max_403_retries}, refreshing proxy...")
+                        proxy = await proxy_pool.force_refresh()
+                    else:
+                        proxy = await setting.get_proxy_async("service")
+                    
+                    proxies = {"http": proxy, "https": proxy} if proxy else None
+                    
+                    # Execute request
+                    response = await asyncio.to_thread(
+                        curl_requests.post,
+                        API_ENDPOINT,
+                        headers=headers,
+                        data=orjson.dumps(payload),
+                        impersonate=IMPERSONATE_BROWSER,
+                        timeout=REQUEST_TIMEOUT,
+                        stream=True,
+                        proxies=proxies
+                    )
+                    
+                    # Inner 403 retry: only trigger when proxy pool exists
+                    if response.status_code == 403 and proxy_pool._enabled:
+                        retry_403_count += 1
+                        
+                        if retry_403_count <= max_403_retries:
+                            logger.warning(f"[Client] Encountered 403 error, retrying ({retry_403_count}/{max_403_retries})...")
+                            await asyncio.sleep(0.5)
+                            continue
+                        
+                        # Inner retry all failed
+                        logger.error(f"[Client] 403 error, retried {retry_403_count-1} times, giving up")
+                    
+                    # Check configurable status code errors - outer retry
+                    if response.status_code in retry_codes:
+                        if outer_retry < MAX_OUTER_RETRY:
+                            delay = (outer_retry + 1) * 0.1  # Progressive delay: 0.1s, 0.2s, 0.3s
+                            logger.warning(f"[Client] Encountered {response.status_code} error, outer retry ({outer_retry+1}/{MAX_OUTER_RETRY}), waiting {delay}s...")
+                            await asyncio.sleep(delay)
+                            break  # Break out of inner loop, enter outer retry
+                        else:
+                            logger.error(f"[Client] {response.status_code} error, retried {outer_retry} times, giving up")
+                            GrokClient._handle_error(response, auth_token)
+                    
+                    # Check response status
+                    if response.status_code != 200:
+                        GrokClient._handle_error(response, auth_token)
+                    
+                    # Success - reset failure count
+                    asyncio.create_task(token_manager.reset_failure(auth_token))
+                    
+                    # If retry succeeded, log it
+                    if outer_retry > 0 or retry_403_count > 0:
+                        logger.info(f"[Client] Retry successful!")
+                    
+                    # Process response
+                    result = (GrokResponseProcessor.process_stream(response, auth_token, auto_upscale) if stream 
+                             else await GrokResponseProcessor.process_normal(response, auth_token, model, auto_upscale))
+                    
+                    asyncio.create_task(GrokClient._update_rate_limits(auth_token, model))
+                    return result
+                    
+                except curl_requests.RequestsError as e:
+                    logger.error(f"[Client] Network error: {e}")
+                    raise GrokApiException(f"Network error: {e}", "NETWORK_ERROR") from e
+                except GrokApiException:
+                    # Re-raise GrokApiException (including 403 errors)
+                    raise
+                except Exception as e:
+                    logger.error(f"[Client] Request error: {e}")
+                    raise GrokApiException(f"Request error: {e}", "REQUEST_ERROR") from e
+        
+        # Theoretically shouldn't reach here, but just in case
+        raise GrokApiException("Request failed: max retries exceeded", "MAX_RETRIES_EXCEEDED")
 
     @staticmethod
     def _build_headers(auth_token: str) -> Dict[str, str]:
@@ -360,18 +383,6 @@ class GrokClient:
             "HTTP_ERROR",
             {"status": response.status_code, "data": error_data}
         )
-
-    @staticmethod
-    async def _process_response(response, auth_token: str, model: str, stream: bool, auto_upscale: bool = None):
-        """Process API response"""
-        if stream:
-            result = GrokResponseProcessor.process_stream(response, auth_token, auto_upscale)
-            asyncio.create_task(GrokClient._update_rate_limits(auth_token, model))
-        else:
-            result = await GrokResponseProcessor.process_normal(response, auth_token, model, auto_upscale)
-            asyncio.create_task(GrokClient._update_rate_limits(auth_token, model))
-
-        return result
 
     @staticmethod
     async def _update_rate_limits(auth_token: str, model: str):

@@ -375,48 +375,101 @@ class GrokTokenManager:
 
     async def check_limits(self, auth_token: str, model: str) -> Optional[Dict[str, Any]]:
         try:
-             rate_limit_model_name = Models.to_rate_limit(model)
-             payload = {"requestKind": "DEFAULT", "modelName": rate_limit_model_name}
-             cf_clearance = setting.grok_config.get("cf_clearance", "")
-             
-             headers = get_dynamic_headers("/rest/rate-limits")
-             headers["Cookie"] = f"{auth_token};{cf_clearance}" if cf_clearance else auth_token
-             
-             proxy_url = setting.grok_config.get("proxy_url", "")
-             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-             
-             async with AsyncSession() as session:
-                response = await session.post(
-                    RATE_LIMIT_ENDPOINT,
-                    headers=headers,
-                    json=payload,
-                    impersonate=IMPERSONATE_BROWSER,
-                    timeout=REQUEST_TIMEOUT,
-                    proxies=proxies
-                )
+            rate_model = Models.to_rate_limit(model)
+            payload = {"requestKind": "DEFAULT", "modelName": rate_model}
+            
+            cf = setting.grok_config.get("cf_clearance", "")
+            headers = get_dynamic_headers("/rest/rate-limits")
+            headers["Cookie"] = f"{auth_token};{cf}" if cf else auth_token
+
+            # Outer retry: configurable status codes (401/429 etc.)
+            retry_codes = setting.grok_config.get("retry_status_codes", [401, 429])
+            MAX_OUTER_RETRY = 3
+            
+            for outer_retry in range(MAX_OUTER_RETRY + 1):  # +1 to ensure 3 actual retries
+                # Inner retry: 403 proxy pool retry
+                max_403_retries = 5
+                retry_403_count = 0
                 
-                if response.status_code == 200:
-                    data = response.json()
-                    sso_value = self._extract_sso(auth_token)
-                    if sso_value:
-                        if model == "grok-4-heavy":
-                            await self.update_limits(sso_value, normal=None, heavy=data.get("remainingQueries", -1))
-                            logger.info(f"[Token] Updated limits: sso={sso_value[:10]}..., heavy={data.get('remainingQueries', -1)}")
+                while retry_403_count <= max_403_retries:
+                    # Async get proxy (supports proxy pool)
+                    from app.core.proxy_pool import proxy_pool
+                    
+                    # If 403 retry and using proxy pool, force refresh proxy
+                    if retry_403_count > 0 and proxy_pool._enabled:
+                        logger.info(f"[Token] 403 retry {retry_403_count}/{max_403_retries}, refreshing proxy...")
+                        proxy = await proxy_pool.force_refresh()
+                    else:
+                        proxy = await setting.get_proxy_async("service")
+                    
+                    proxies = {"http": proxy, "https": proxy} if proxy else None
+                    
+                    async with AsyncSession() as session:
+                        response = await session.post(
+                            RATE_LIMIT_ENDPOINT,
+                            headers=headers,
+                            json=payload,
+                            impersonate=IMPERSONATE_BROWSER,
+                            timeout=REQUEST_TIMEOUT,
+                            proxies=proxies
+                        )
+
+                        # Inner 403 retry: only trigger when proxy pool exists
+                        if response.status_code == 403 and proxy_pool._enabled:
+                            retry_403_count += 1
+                            
+                            if retry_403_count <= max_403_retries:
+                                logger.warning(f"[Token] Encountered 403 error, retrying ({retry_403_count}/{max_403_retries})...")
+                                await asyncio.sleep(0.5)
+                                continue
+                            
+                            # Inner retry all failed
+                            logger.error(f"[Token] 403 error, retried {retry_403_count-1} times, giving up")
+                            sso = self._extract_sso(auth_token)
+                            if sso:
+                                await self.record_failure(auth_token, 403, "Server blocked")
+                        
+                        # Check configurable status code errors - outer retry
+                        if response.status_code in retry_codes:
+                            if outer_retry < MAX_OUTER_RETRY:
+                                delay = (outer_retry + 1) * 0.1  # Progressive delay: 0.1s, 0.2s, 0.3s
+                                logger.warning(f"[Token] Encountered {response.status_code} error, outer retry ({outer_retry+1}/{MAX_OUTER_RETRY}), waiting {delay}s...")
+                                await asyncio.sleep(delay)
+                                break  # Break out of inner loop, enter outer retry
+                            else:
+                                logger.error(f"[Token] {response.status_code} error, retried {outer_retry} times, giving up")
+                                sso = self._extract_sso(auth_token)
+                                if sso:
+                                    if response.status_code == 401:
+                                        await self.record_failure(auth_token, 401, "Token expired")
+                                    else:
+                                        await self.record_failure(auth_token, response.status_code, f"Error: {response.status_code}")
+                                return None
+
+                        if response.status_code == 200:
+                            data = response.json()
+                            sso = self._extract_sso(auth_token)
+                            
+                            if outer_retry > 0 or retry_403_count > 0:
+                                logger.info(f"[Token] Retry successful!")
+                            
+                            if sso:
+                                if model == "grok-4-heavy":
+                                    await self.update_limits(sso, normal=None, heavy=data.get("remainingQueries", -1))
+                                    logger.info(f"[Token] Updated limits: sso={sso[:10]}..., heavy={data.get('remainingQueries', -1)}")
+                                else:
+                                    await self.update_limits(sso, normal=data.get("remainingTokens", -1), heavy=None)
+                                    logger.info(f"[Token] Updated limits: sso={sso[:10]}..., basic={data.get('remainingTokens', -1)}")
+                            
+                            return data
                         else:
-                            await self.update_limits(sso_value, normal=data.get("remainingTokens", -1), heavy=None)
-                            logger.info(f"[Token] Updated limits: sso={sso_value[:10]}..., basic={data.get('remainingTokens', -1)}")
-                    return data
-                else:
-                    logger.warning(f"[Token] Failed to get rate limits: {response.status_code}")
-                    sso_value = self._extract_sso(auth_token)
-                    if sso_value:
-                        if response.status_code == 401:
-                             await self.record_failure(auth_token, 401, "Token expired")
-                        elif response.status_code == 403:
-                             await self.record_failure(auth_token, 403, "Server blocked (Cloudflare)")
-                        else:
-                             await self.record_failure(auth_token, response.status_code, f"Error: {response.status_code}")
-                    return None
+                            # Other errors
+                            logger.warning(f"[Token] Failed to get rate limits: {response.status_code}")
+                            sso = self._extract_sso(auth_token)
+                            if sso:
+                                await self.record_failure(auth_token, response.status_code, f"Error: {response.status_code}")
+                            return None
+
         except Exception as e:
             logger.error(f"[Token] Rate limit check error: {str(e)}")
             return None
