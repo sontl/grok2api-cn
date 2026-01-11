@@ -288,10 +288,10 @@ class GrokTokenManager:
     def select_token(self, model: str, exclude_tokens: list[str] = None) -> str:
         self._reload_if_needed()
         exclude_tokens = exclude_tokens or []
-        print (exclude_tokens)
+        
         def select_best_token(tokens_dict: Dict[str, Any], field: str) -> Tuple[Optional[str], Optional[int]]:
-            unused_tokens = []
-            used_tokens = []
+            # Collect all valid tokens with their attributes
+            all_tokens = []
             
             for token_key, token_data in tokens_dict.items():
                 if token_key in exclude_tokens:
@@ -304,8 +304,7 @@ class GrokTokenManager:
                         break
                 if is_excluded:
                     continue
-                print (token_key)
-                print (token_data)
+                    
                 if token_data.get("status") == "expired":
                     continue
                 if token_data.get("failedCount", 0) >= MAX_FAILURE_COUNT:
@@ -316,23 +315,27 @@ class GrokTokenManager:
                 
                 if remaining == 0:
                     continue
-                    
-                if remaining == -1:
-                    unused_tokens.append((token_key, priority))
-                elif remaining > 0:
-                    used_tokens.append((token_key, remaining, priority))
+                
+                # Store: (token_key, priority, is_unused, remaining)
+                # is_unused=1 for unused (remaining=-1), 0 for used
+                is_unused = 1 if remaining == -1 else 0
+                all_tokens.append((token_key, priority, is_unused, remaining))
             
-            if unused_tokens:
-                # Sort by priority desc
-                unused_tokens.sort(key=lambda x: x[1], reverse=True)
-                return unused_tokens[0][0], -1
+            if not all_tokens:
+                return None, None
             
-            if used_tokens:
-                # Sort by priority desc, then remaining desc
-                used_tokens.sort(key=lambda x: (x[2], x[1]), reverse=True)
-                return used_tokens[0][0], used_tokens[0][1]
+            # Sort by: priority (desc), is_unused (desc - prefer unused as tiebreaker), remaining (desc)
+            # This ensures highest priority token is selected first, regardless of used/unused status
+            all_tokens.sort(key=lambda x: (x[1], x[2], x[3] if x[3] > 0 else 999999), reverse=True)
             
-            return None, None
+            best_token = all_tokens[0]
+            token_key = best_token[0]
+            remaining = best_token[3]
+            
+            logger.debug(f"[Token] Selected token with priority={best_token[1]}, unused={best_token[2]==1}, remaining={remaining}")
+            
+            return token_key, remaining
+
 
         token_data_snapshot = {
             TokenType.NORMAL.value: self.token_data[TokenType.NORMAL.value].copy(),
