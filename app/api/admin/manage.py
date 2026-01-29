@@ -926,3 +926,32 @@ async def test_token(
             status_code=500,
             detail={"error": f"Failed to test Token: {str(e)}", "code": "TEST_TOKEN_ERROR"}
         )
+
+
+@router.post("/api/tokens/reset")
+async def reset_all_tokens(_: bool = Depends(verify_admin_session)) -> Dict[str, Any]:
+    """
+    Reset all tokens
+
+    Reset all tokens: priority=0, failedCount=0, lastFailureReason=None, status=active.
+    This is useful when all tokens are exhausted and you want to retry them.
+    """
+    try:
+        logger.debug("[Admin] Resetting all tokens")
+
+        # Call the reset_all_tokens method
+        token_manager.reset_all_tokens()
+
+        logger.info("[Admin] All tokens reset successfully")
+
+        return {
+            "success": True,
+            "message": "All tokens have been reset successfully"
+        }
+
+    except Exception as e:
+        logger.error(f"[Admin] Reset all tokens exception - Error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": f"Failed to reset tokens: {str(e)}", "code": "RESET_TOKENS_ERROR"}
+        )
