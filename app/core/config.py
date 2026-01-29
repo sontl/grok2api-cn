@@ -23,7 +23,7 @@ DEFAULT_GROK = {
     "stream_first_response_timeout": 30,
     "stream_chunk_timeout": 120,
     "stream_total_timeout": 600,
-    "retry_status_codes": [401, 429],  # Retryable HTTP status codes
+    "retry_status_codes": [401, 403, 429],  # Retryable HTTP status codes
 }
 
 DEFAULT_GLOBAL = {

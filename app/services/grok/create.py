@@ -41,11 +41,11 @@ class PostCreateManager:
                 "Cookie": f"{auth_token};{cf_clearance}" if cf_clearance else auth_token
             }
             
-            retry_codes = setting.grok_config.get("retry_status_codes", [401, 429])
-            MAX_OUTER_RETRY = 3
+            retry_codes = setting.grok_config.get("retry_status_codes", [401, 403, 429])
+            MAX_OUTER_RETRY = 1
             
             for outer_retry in range(MAX_OUTER_RETRY + 1):
-                max_403_retries = 5
+                max_403_retries = 2
                 retry_403_count = 0
                 
                 while retry_403_count <= max_403_retries:

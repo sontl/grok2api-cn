@@ -135,7 +135,7 @@ class GrokClient:
                     raise
 
                 status = e.context.get("status") if e.context else None
-                retry_codes = setting.grok_config.get("retry_status_codes", [401, 429])
+                retry_codes = setting.grok_config.get("retry_status_codes", [401, 403, 429])
                 
                 if status not in retry_codes:
                     raise

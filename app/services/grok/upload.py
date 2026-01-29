@@ -60,13 +60,13 @@ class ImageUploadManager:
 
         try:
             # Outer retry: configurable status codes (401/429 etc.)
-            retry_codes = setting.grok_config.get("retry_status_codes", [401, 429])
-            MAX_OUTER_RETRY = 3
+            retry_codes = setting.grok_config.get("retry_status_codes", [401, 403, 429])
+            MAX_OUTER_RETRY = 1
             
             for outer_retry in range(MAX_OUTER_RETRY + 1):  # +1 to ensure 3 actual retries
                 try:
                     # Inner retry: 403 proxy pool retry
-                    max_403_retries = 5
+                    max_403_retries = 2
                     retry_403_count = 0
                     
                     while retry_403_count <= max_403_retries:

@@ -39,7 +39,7 @@ temporary = true
 show_thinking = true
 proxy_pool_url = ""
 proxy_pool_interval = 300
-retry_status_codes = [401, 429]
+retry_status_codes = [401, 403, 429]
 EOF
 fi
 
