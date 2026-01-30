@@ -131,14 +131,24 @@ class GrokClient:
             except GrokApiException as e:
                 last_err = e
                 # Check if it's retryable
+                logger.debug(f"[Client] Caught exception: error_code={e.error_code}, context={e.context}, details={e.details}")
+                
                 if e.error_code not in ["HTTP_ERROR", "NO_AVAILABLE_TOKEN"]:
+                    logger.debug(f"[Client] Exception not retryable (error_code={e.error_code}), raising")
                     raise
 
+                # Check status in both context and details (different code paths use different fields)
                 status = e.context.get("status") if e.context else None
+                if status is None:
+                    status = e.details.get("status") if e.details else None
+                    
                 retry_codes = setting.grok_config.get("retry_status_codes", [401, 403, 429])
                 
                 if status not in retry_codes:
+                    logger.debug(f"[Client] Status {status} not in retry_codes {retry_codes}, raising")
                     raise
+                
+                logger.info(f"[Client] Upload rate limited, will try next token (attempt {i+1}/{max_attempts}, tried {len(tried_tokens)} tokens)")
 
         raise last_err if last_err else GrokApiException("Request failed after trying all available tokens", "REQUEST_ERROR")
 
@@ -214,7 +224,8 @@ class GrokClient:
             raise GrokApiException(
                 "Upload failed: Token rate limited (403)",
                 "HTTP_ERROR",
-                {"status": 403, "upload_rate_limited": True}
+                {"upload_rate_limited": True},  # details
+                {"status": 403}  # context - this is where _try() looks for status
             )
 
         return image_attachments, image_uris
