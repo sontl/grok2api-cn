@@ -137,6 +137,11 @@ class GrokClient:
                     logger.debug(f"[Client] Exception not retryable (error_code={e.error_code}), raising")
                     raise
 
+                # Special case: upload rate limiting should ALWAYS trigger token rotation
+                if e.details and e.details.get("upload_rate_limited"):
+                    logger.info(f"[Client] Upload rate limited, will try next token (attempt {i+1}/{max_attempts}, tried {len(tried_tokens)} tokens)")
+                    continue
+
                 # Check status in both context and details (different code paths use different fields)
                 status = e.context.get("status") if e.context else None
                 if status is None:
@@ -148,7 +153,7 @@ class GrokClient:
                     logger.debug(f"[Client] Status {status} not in retry_codes {retry_codes}, raising")
                     raise
                 
-                logger.info(f"[Client] Upload rate limited, will try next token (attempt {i+1}/{max_attempts}, tried {len(tried_tokens)} tokens)")
+                logger.info(f"[Client] Retryable error (status={status}), will try next token (attempt {i+1}/{max_attempts}, tried {len(tried_tokens)} tokens)")
 
         raise last_err if last_err else GrokApiException("Request failed after trying all available tokens", "REQUEST_ERROR")
 
