@@ -107,31 +107,40 @@ class ImageUploadManager:
                                 proxies=proxies,
                             )
 
-                            # Inner 403 retry: only trigger when proxy pool exists
-                            if response.status_code == 403 and proxy_pool._enabled:
-                                retry_403_count += 1
-                                
-                                if retry_403_count <= max_403_retries:
-                                    logger.warning(f"[Upload] Encountered 403 error, retrying ({retry_403_count}/{max_403_retries})...")
-                                    await asyncio.sleep(0.5)
-                                    continue
-                                
-                                # Inner retry all failed - this is a rate limit issue
-                                logger.error(f"[Upload] 403 error, retried {retry_403_count-1} times, giving up (rate limited)")
-                                return "", "", True  # Indicate rate limiting
+                            # Handle 403 error - this is rate limiting, not just proxy issue
+                            if response.status_code == 403:
+                                if proxy_pool._enabled:
+                                    # With proxy pool, try different proxies
+                                    retry_403_count += 1
+                                    
+                                    if retry_403_count <= max_403_retries:
+                                        logger.warning(f"[Upload] Encountered 403 error, retrying with new proxy ({retry_403_count}/{max_403_retries})...")
+                                        await asyncio.sleep(0.5)
+                                        continue
+                                    
+                                    # All proxy retries failed - rate limited
+                                    logger.error(f"[Upload] 403 error, retried {retry_403_count-1} times with proxies, giving up (rate limited)")
+                                    return "", "", True
+                                else:
+                                    # No proxy pool - 403 means token is rate limited
+                                    logger.error(f"[Upload] 403 error (rate limited), no proxy pool to retry")
+                                    return "", "", True
                             
-                            # Check configurable status code errors - outer retry
-                            if response.status_code in retry_codes:
+                            # Handle 429 error - always rate limiting
+                            if response.status_code == 429:
+                                logger.error(f"[Upload] 429 error (rate limited)")
+                                return "", "", True
+                            
+                            # Handle 401 error - token expired, do outer retry with same token once
+                            if response.status_code == 401:
                                 if outer_retry < MAX_OUTER_RETRY:
-                                    delay = (outer_retry + 1) * 0.1  # Progressive delay: 0.1s, 0.2s, 0.3s
-                                    logger.warning(f"[Upload] Encountered {response.status_code} error, outer retry ({outer_retry+1}/{MAX_OUTER_RETRY}), waiting {delay}s...")
+                                    delay = (outer_retry + 1) * 0.1
+                                    logger.warning(f"[Upload] Encountered 401 error, outer retry ({outer_retry+1}/{MAX_OUTER_RETRY}), waiting {delay}s...")
                                     await asyncio.sleep(delay)
                                     break  # Break out of inner loop, enter outer retry
                                 else:
-                                    # 403/429 after all retries = rate limited
-                                    is_rate_limited = response.status_code in [403, 429]
-                                    logger.error(f"[Upload] {response.status_code} error, retried {outer_retry} times, giving up")
-                                    return "", "", is_rate_limited
+                                    logger.error(f"[Upload] 401 error, retried {outer_retry} times, giving up")
+                                    return "", "", False  # 401 is token issue, not rate limit
                             
                             if response.status_code == 200:
                                 result = response.json()
