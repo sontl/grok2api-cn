@@ -51,6 +51,7 @@ class GrokTokenManager:
         # Batch save queue
         self._save_pending = False
         self._save_task = None
+        self._reset_task = None
         self._shutdown = False
         
         self._initialized = True
@@ -130,11 +131,35 @@ class GrokTokenManager:
                 except Exception as e:
                     logger.error(f"[Token] Batch save failed: {e}")
 
+    async def _scheduled_reset_worker(self) -> None:
+        """Scheduled reset background task - resets all tokens periodically"""
+        from app.core.config import setting
+        
+        # Get interval from config, default 48 hours (in hours)
+        interval_hours = setting.global_config.get("token_reset_interval_hours", 48)
+        interval_seconds = interval_hours * 3600
+        
+        logger.info(f"[Token] Scheduled reset task started, interval: {interval_hours} hours")
+        
+        while not self._shutdown:
+            await asyncio.sleep(interval_seconds)
+            
+            if not self._shutdown:
+                try:
+                    self.reset_all_tokens()
+                    logger.info(f"[Token] Scheduled reset completed, next reset in {interval_hours} hours")
+                except Exception as e:
+                    logger.error(f"[Token] Scheduled reset failed: {e}")
+
     async def start_batch_save(self) -> None:
-        """Start batch save task"""
+        """Start batch save task and scheduled reset task"""
         if self._save_task is None:
             self._save_task = asyncio.create_task(self._batch_save_worker())
             logger.info("[Token] Batch save task created")
+        
+        if self._reset_task is None:
+            self._reset_task = asyncio.create_task(self._scheduled_reset_worker())
+            logger.info("[Token] Scheduled reset task created")
 
     async def shutdown(self) -> None:
         """Shutdown and flush pending data"""
@@ -144,6 +169,13 @@ class GrokTokenManager:
             self._save_task.cancel()
             try:
                 await self._save_task
+            except asyncio.CancelledError:
+                pass
+        
+        if self._reset_task:
+            self._reset_task.cancel()
+            try:
+                await self._reset_task
             except asyncio.CancelledError:
                 pass
         

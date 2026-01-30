@@ -169,7 +169,11 @@ class GrokClient:
 
     @staticmethod
     async def _upload_imgs(image_urls: List[str], auth_token: str) -> Tuple[List[str], List[str]]:
-        """Upload images and return attachment ID list"""
+        """Upload images and return attachment ID list
+        
+        Raises:
+            GrokApiException: If any upload fails due to rate limiting (403/429)
+        """
         if not image_urls:
             return [], []
 
@@ -182,15 +186,36 @@ class GrokClient:
         
         image_attachments = []
         image_uris = []
+        rate_limited = False
 
         for url, result in zip(image_urls, results):
             if isinstance(result, Exception):
                 logger.warning(f"[Client] Image upload failed: {url}, Error: {result}")
+            elif isinstance(result, tuple) and len(result) == 3:
+                file_id, file_uri, is_rate_limited = result
+                if is_rate_limited:
+                    rate_limited = True
+                    logger.warning(f"[Client] Image upload rate limited (403/429): {url}")
+                elif file_id:
+                    image_attachments.append(file_id)
+                    image_uris.append(file_uri)
             elif isinstance(result, tuple) and len(result) == 2:
+                # Backward compatibility
                 file_id, file_uri = result
                 if file_id:
                     image_attachments.append(file_id)
                     image_uris.append(file_uri)
+
+        # If any upload was rate limited, raise an exception to trigger token rotation
+        if rate_limited:
+            # Record this as a failure so the token is penalized and not selected on subsequent requests
+            # Use 429 (rate limit) instead of 403, because record_failure ignores 403 (treats it as IP issue)
+            asyncio.create_task(token_manager.record_failure(auth_token, 429, "Upload rate limited"))
+            raise GrokApiException(
+                "Upload failed: Token rate limited (403)",
+                "HTTP_ERROR",
+                {"status": 403, "upload_rate_limited": True}
+            )
 
         return image_attachments, image_uris
 

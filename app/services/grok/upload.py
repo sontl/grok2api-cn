@@ -33,8 +33,15 @@ class ImageUploadManager:
     """
 
     @staticmethod
-    async def upload(image_input: str, auth_token: str) -> Tuple[str, str]:
-        """Upload image to Grok, supporting Base64 or URL"""
+    async def upload(image_input: str, auth_token: str) -> Tuple[str, str, bool]:
+        """Upload image to Grok, supporting Base64 or URL
+        
+        Returns:
+            Tuple of (file_id, file_uri, rate_limited)
+            - file_id: The uploaded file ID, empty string on failure
+            - file_uri: The uploaded file URI, empty string on failure
+            - rate_limited: True if upload failed due to 403 rate limiting (token should be rotated)
+        """
         if ImageUploadManager._is_url(image_input):
             # Download URL image
             image_buffer, mime_type = await ImageUploadManager._download(image_input)
@@ -109,8 +116,9 @@ class ImageUploadManager:
                                     await asyncio.sleep(0.5)
                                     continue
                                 
-                                # Inner retry all failed
-                                logger.error(f"[Upload] 403 error, retried {retry_403_count-1} times, giving up")
+                                # Inner retry all failed - this is a rate limit issue
+                                logger.error(f"[Upload] 403 error, retried {retry_403_count-1} times, giving up (rate limited)")
+                                return "", "", True  # Indicate rate limiting
                             
                             # Check configurable status code errors - outer retry
                             if response.status_code in retry_codes:
@@ -120,8 +128,10 @@ class ImageUploadManager:
                                     await asyncio.sleep(delay)
                                     break  # Break out of inner loop, enter outer retry
                                 else:
+                                    # 403/429 after all retries = rate limited
+                                    is_rate_limited = response.status_code in [403, 429]
                                     logger.error(f"[Upload] {response.status_code} error, retried {outer_retry} times, giving up")
-                                    return "", ""
+                                    return "", "", is_rate_limited
                             
                             if response.status_code == 200:
                                 result = response.json()
@@ -132,14 +142,14 @@ class ImageUploadManager:
                                     logger.info(f"[Upload] Retry successful!")
                                 
                                 logger.debug(f"[Upload] Image upload successful, file ID: {file_id}")
-                                return file_id, file_uri
+                                return file_id, file_uri, False
                             
-                            # Other errors return directly
+                            # Other errors return directly (not rate limited)
                             logger.error(f"[Upload] Failed, status code: {response.status_code}")
-                            return "", ""
+                            return "", "", False
                     
-                    # Inner loop ended normally (not break), means 403 retry all failed
-                    return "", ""
+                    # Inner loop ended normally (not break), means 403 retry all failed - rate limited
+                    return "", "", True
                 
                 except Exception as e:
                     if outer_retry < MAX_OUTER_RETRY - 1:
@@ -148,13 +158,13 @@ class ImageUploadManager:
                         continue
                     
                     logger.warning(f"[Upload] Failed: {e}")
-                    return "", ""
+                    return "", "", False
             
-            return "", ""
+            return "", "", False
 
         except Exception as e:
             logger.warning(f"[Upload] Failed: {e}")
-            return "", ""
+            return "", "", False
 
 
     @staticmethod
